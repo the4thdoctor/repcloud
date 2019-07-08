@@ -19,7 +19,7 @@ package_data = ('%s/repcloud' % python_lib, ['LICENSE.txt'])
 	
 
 #sql_up_path = 'sql/upgrade'
-conf_dir = "/%s/repcloud/configuration" % python_lib
+conf_dir = "/%s/repcloud/config" % python_lib
 sql_dir = "/%s/repcloud/sql" % python_lib
 #sql_up_dir = "/%s/repcloud/%s" % (python_lib, sql_up_path)
 
@@ -84,6 +84,7 @@ setup(
 		'toml>=0.10.0', 
 		'tabulate>=0.8.1', 
 		'daemonize>=2.4.7', 
+		'sphinx>=2.1.2', 
 	],
 	data_files = data_files, 
 	include_package_data = True, 
