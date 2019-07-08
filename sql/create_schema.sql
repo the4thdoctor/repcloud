@@ -1,0 +1,13 @@
+--CREATE SCHEMA
+CREATE SCHEMA IF NOT EXISTS sch_repcloud;
+
+--VIEWS
+CREATE OR REPLACE VIEW sch_repcloud.v_version 
+ AS
+	SELECT '0.0.1'::TEXT t_version
+;
+
+--TYPES
+
+--TABLES/INDICES	
+

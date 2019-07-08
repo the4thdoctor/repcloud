@@ -1,0 +1,17 @@
+[connections.repack]
+#the user owning the relations we want to repack
+user = "pg_user"
+# the user's password
+password = "pg_password"
+# the port used by the postgresql cluster
+port = "5432"
+# the hostname to connect to
+host = "pg_host"
+# the database to  connect to
+database = "db_to_repack"
+#  ssl mode, allowed values: disable, allow, prefer, require, verify-ca verify-full check https://www.postgresql.org/docs/current/libpq-ssl.html for the details
+sslmode = "require"
+# the schemas and the tables we want to repack. if the lists are empty all the relations  within the database are processed
+#the lists are cumulative
+schemas = ['foo',]
+tables = ['foo.bar']
