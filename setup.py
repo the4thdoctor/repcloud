@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 from setuptools import setup
 from distutils.sysconfig import get_python_lib
-from os import listdir
-from os.path import isfile, join
+#from os import listdir
+#from os.path import isfile, join
 
 def readme():
 	try:
@@ -18,24 +18,24 @@ package_data = ('%s/repcloud' % python_lib, ['LICENSE.txt'])
 
 	
 
-sql_up_path = 'sql/upgrade'
+#sql_up_path = 'sql/upgrade'
 conf_dir = "/%s/repcloud/configuration" % python_lib
 sql_dir = "/%s/repcloud/sql" % python_lib
-sql_up_dir = "/%s/repcloud/%s" % (python_lib, sql_up_path)
+#sql_up_dir = "/%s/repcloud/%s" % (python_lib, sql_up_path)
 
 
 data_files = []
-conf_files = (conf_dir, ['configuration/config-example.toml'])
+conf_files = (conf_dir, ['config/config-example.toml'])
 
 sql_src = ['sql/create_schema.sql', 'sql/drop_schema.sql']
-sql_upgrade = ["%s/%s" % (sql_up_path, file) for file in listdir(sql_up_path) if isfile(join(sql_up_path, file))]
+#sql_upgrade = ["%s/%s" % (sql_up_path, file) for file in listdir(sql_up_path) if isfile(join(sql_up_path, file))]
 
 sql_files = (sql_dir,sql_src)
-sql_up_files = (sql_up_dir,sql_upgrade)
+#sql_up_files = (sql_up_dir,sql_upgrade)
 
 data_files.append(conf_files)
 data_files.append(sql_files)
-data_files.append(sql_up_files)
+#data_files.append(sql_up_files)
 
 
 
@@ -75,17 +75,19 @@ setup(
 		"repcloud.__init__",
 	],
 	scripts=[
+		"scripts/rpcl.py", 
+		"scripts/rpcl"
 	],
 	install_requires=[
 		'argparse>=1.2.1', 
 		'psycopg2-binary>=2.7.4', 
-		'PyYAML>=3.12', 
+		'toml>=0.10.0', 
 		'tabulate>=0.8.1', 
 		'daemonize>=2.4.7', 
 	],
 	data_files = data_files, 
 	include_package_data = True, 
 	python_requires='>=3.3',
-	keywords='postgresql database cloud ',
+	keywords='postgresql database cloud repack transform',
 	
 )
