@@ -91,12 +91,19 @@ class repack_engine():
 				tab_body.append(tab_row)
 			print(tabulate(tab_body, headers=tab_headers))
 
-	def setup_schema(self):
+	def create_schema(self):
 		"""
-		The method creates the repack schema into the target connection.
+		The method creates the repack schema for the target connection.
 		"""
 		self.__check_connections()
-		self.pg_engine.setup_schema(self.connection, self.args.connection )
+		self.pg_engine.create_repack_schema(self.connection, self.args.connection )
+
+	def drop_schema(self):
+		"""
+		The method drops the repack schema for the target connection.
+		"""
+		self.__check_connections()
+		self.pg_engine.drop_repack_schema(self.connection, self.args.connection )
 
 	def __set_conf_permissions(self,  rep_dir):
 		"""

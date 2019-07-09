@@ -6,7 +6,7 @@ from repcloud import repack_engine
 
 commands = [
 	'show_config',
-	'setup_schema',
+	'create_schema',
 	'show_connections'
 	]
 
