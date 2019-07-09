@@ -12,20 +12,36 @@ CREATE OR REPLACE VIEW v_version
 
 --TABLES/INDICES	
 
-CREATE TABLE t_table_reindex
+CREATE TABLE t_table_repack
 (
 	i_id_table	bigserial,
 	v_table_name character varying(100) NOT NULL,
 	v_schema_name character varying(100) NOT NULL,
-	t_table_pkey text NOT NULL,
-	t_binlog_name text NOT NULL,
-	i_binlog_position bigint NOT NULL,
-	ts_error	timestamp without time zone,
-	t_sql text,
-	t_error_message text,
-	CONSTRAINT pk_t_table_reindex PRIMARY KEY (i_id_table)
+	v_repack_step character varying(100) NOT NULL,
+	v_status  character varying(100) NOT NULL,
+	i_size_start bigint,
+	i_size_end bigint,
+	ts_repack_start	timestamp without time zone,
+	ts_repack_end	timestamp without time zone,
+	CONSTRAINT pk_t_table_repack PRIMARY KEY (i_id_table)
 )
 ;
+
+CREATE TABLE t_table_repack_history
+(
+	i_id_hist	bigserial,
+	i_id_table	bigint,
+	v_table_name character varying(100) NOT NULL,
+	v_schema_name character varying(100) NOT NULL,
+	v_repack_step character varying(100) NOT NULL,
+	i_size_start bigint,
+	i_size_end bigint,
+	ts_repack_start	timestamp without time zone,
+	ts_repack_end	timestamp without time zone,
+	CONSTRAINT pk_t_table_repack_history PRIMARY KEY (i_id_hist)
+)
+;
+
 
 --VIEWS
 
@@ -675,3 +691,4 @@ FROM
 		ORDER BY i_idx_wasted_bytes DESC
 	) t_idx_stat
 ;
+
