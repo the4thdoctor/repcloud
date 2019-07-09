@@ -5,6 +5,10 @@ from distutils.sysconfig import get_python_lib
 import toml
 from tabulate import tabulate
 from repcloud import pg_engine
+from daemonize import Daemonize
+import logging
+from logging.handlers  import TimedRotatingFileHandler
+
 class repack_engine():
 	def __init__(self,  args):
 		"""
@@ -17,6 +21,7 @@ class repack_engine():
 		self.catalog_version = '0.0.1'
 		self.lst_yes =  ['yes',  'Yes', 'y', 'Y']
 		config_file = self.args.config.split('.')
+		self.config_name = config_file [0]
 		python_lib=get_python_lib()
 		self.connection = None
 
@@ -43,11 +48,72 @@ class repack_engine():
 			self.config_file = "%s/%s" % (local_conf,  self.args.config )
 		else:
 			self.config_file = "%s/%s.toml" % (local_conf,  self.args.config )
-		
 		self.__load_config()
-
 		self.pg_engine = pg_engine()
+		self.__init_logger()
+		self. __log_message('Logger initialised', 'info')
 
+	def __log_message(self, message, level):
+		"""
+		The method outputs the message on file or console according with the log level and debug options
+		"""
+		if level=='info':
+			self.file_logger.info(message)
+		elif level=='debug':
+			self.file_logger.debug(message)
+		elif level=='warning':
+			self.file_logger.warning(message)
+		elif level=='error':
+			self.file_logger.error(message)
+		elif level=='critical':
+			self.file_logger.critical(message)
+		
+		
+		
+		
+	def __init_logger(self):
+		"""
+		The method initialise a new logger object using the configuration parameters.
+		The formatter is different if the debug option is enabler or not.
+		The method returns a new logger object and sets the logger's file descriptor in the class variable 
+		logger_fds, used when the process is demonised.
+		
+		:return: list with logger and file descriptor
+		:rtype: list
+
+		"""
+		log_dir = self.config["logging"]["log_dir"] 
+		log_level = self.config["logging"]["log_level"] 
+		log_dest = self.config["logging"]["log_dest"] 
+		log_days_keep = self.config["logging"]["log_days_keep"] 
+		log_name = "repack_%s" % (self.config_name)
+		log_file = os.path.expanduser('%s/%s.log' % (log_dir,log_name))
+		str_format = "%(asctime)s %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
+		formatter = logging.Formatter(str_format, "%Y-%m-%d %H:%M:%S")
+		
+		sh=logging.StreamHandler(sys.stdout)
+		fh = TimedRotatingFileHandler(log_file, when="d",interval=1,backupCount=log_days_keep)
+		if log_level=='debug' or self.args.debug:
+			fh.setLevel(logging.DEBUG)
+			sh.setLevel(logging.DEBUG)
+		elif log_level=='info':
+			fh.setLevel(logging.INFO)
+			sh.setLevel(logging.INFO)
+		
+		self.file_logger = logging.getLogger('file')
+		self.cons_logger = logging.getLogger('console')
+		self.file_logger.setLevel(logging.DEBUG)
+		self.cons_logger.setLevel(logging.DEBUG)
+		fh.setFormatter(formatter)
+		sh.setFormatter(formatter)
+		
+		self.file_logger.addHandler(fh)
+		self.cons_logger.addHandler(sh)
+		self.file_logger_fds = fh.stream.fileno()
+		self.cons_logger_fds = sh.stream.fileno()
+		
+		
+		
 	def __load_config(self):
 		"""
 		The method loads the configuration from the file specified in the args.config parameter.
@@ -91,6 +157,13 @@ class repack_engine():
 				tab_body.append(tab_row)
 			print(tabulate(tab_body, headers=tab_headers))
 
+	def repack_tables(self):
+		"""
+		The method performs the repack 
+		"""
+		self.__check_connections()
+		self.pg_engine.repack_tables(self.connection, self.args.connection )
+		
 	def create_schema(self):
 		"""
 		The method creates the repack schema for the target connection.

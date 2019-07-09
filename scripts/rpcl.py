@@ -7,7 +7,8 @@ from repcloud import repack_engine
 commands = [
 	'show_config',
 	'create_schema',
-	'show_connections'
+	'show_connections', 
+	'repack_tables'
 	]
 
 if __name__ == "__main__":

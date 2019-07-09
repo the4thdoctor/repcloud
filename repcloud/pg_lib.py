@@ -120,3 +120,8 @@ class pg_engine(object):
 			
 			self.__drop_repack_schema(connection[coname])
 	
+
+	def repack_tables(self, connection, coname):
+		if coname == 'all':
+			for con in connection:
+				print('Repacking the tables for connection %s' % con)
