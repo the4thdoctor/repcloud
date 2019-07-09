@@ -44,9 +44,12 @@ class pg_engine(object):
 		pgsql_conn = psycopg2.connect(strconn)
 		pgsql_conn.set_session(autocommit=True)
 		pgsql_cur = pgsql_conn .cursor()
+		pgsql_cur.execute('SELECT pg_backend_pid();')
+		backend_pid = pgsql_cur.fetchone()
 		db_handler = {}
 		db_handler["connection"] = pgsql_conn
 		db_handler["cursor"] = pgsql_cur
+		db_handler["pid"] = backend_pid[0]
 		return db_handler
 		
 
