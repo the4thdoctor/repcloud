@@ -15,10 +15,13 @@ CREATE OR REPLACE VIEW v_version
 CREATE TABLE t_table_repack
 (
 	i_id_table	bigserial,
-	v_table_name character varying(100) NOT NULL,
+	v_old_table_name character varying(100) NOT NULL,
+	v_new_table_name  character varying(100) NOT NULL,
 	v_schema_name character varying(100) NOT NULL,
-	v_repack_step character varying(100) NOT NULL,
-	v_status  character varying(100) NOT NULL,
+	t_create_identiy text,
+	t_create_iidx text[],
+	v_repack_step character varying(100),
+	v_status  character varying(100) ,
 	i_size_start bigint,
 	i_size_end bigint,
 	ts_repack_start	timestamp without time zone,
@@ -27,21 +30,37 @@ CREATE TABLE t_table_repack
 )
 ;
 
-CREATE TABLE t_table_repack_history
-(
-	i_id_hist	bigserial,
-	i_id_table	bigint,
-	v_table_name character varying(100) NOT NULL,
-	v_schema_name character varying(100) NOT NULL,
-	v_repack_step character varying(100) NOT NULL,
-	i_size_start bigint,
-	i_size_end bigint,
-	ts_repack_start	timestamp without time zone,
-	ts_repack_end	timestamp without time zone,
-	CONSTRAINT pk_t_table_repack_history PRIMARY KEY (i_id_hist)
-)
-;
+CREATE UNIQUE INDEX uidx_t_table_repack_table_schema ON t_table_repack(v_schema_name,v_old_table_name);
 
+
+CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
+RETURNS VOID as 
+$BODY$
+DECLARE
+	p_t_schema			ALIAS FOR $1;
+	p_t_table				ALIAS FOR $2;
+	v_new_table			character varying(64);
+	t_sql_create 		text;
+	oid_old_table		oid;
+BEGIN
+	--t_old_table:=format('%I.%I',p_t_schema,p_t_table);
+	oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
+	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||oid_old_table::text);
+	t_sql_create:=format('
+		CREATE TABLE IF NOT EXISTS sch_repcloud.%s
+			(LIKE %I.%I)',
+			v_new_table,
+			p_t_schema,
+			p_t_table
+			
+		);
+	EXECUTE t_sql_create ;
+	INSERT INTO sch_repcloud.t_table_repack (v_old_table_name,v_new_table_name,v_schema_name)
+		VALUES (p_t_table,v_new_table,p_t_schema) ON CONFLICT DO NOTHING;
+END
+$BODY$
+LANGUAGE plpgsql 
+;
 
 --VIEWS
 

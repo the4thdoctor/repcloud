@@ -7,6 +7,7 @@
 * build the indices
 
 ## DYNAMIC DATA
+* start a transaction (possibly in with begin isolation level repeatable read;)
 * add a ACCESS SHARE lock on the origin's table
 * create a new empty table in the repack schema
 * create a collecting table with the same origin table's data type
