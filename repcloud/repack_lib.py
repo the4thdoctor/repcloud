@@ -52,7 +52,7 @@ class repack_engine():
 		self.pg_engine = pg_engine()
 		self.__init_logger()
 		self. __log_message('Logger initialised', 'info')
-
+		
 	def __log_message(self, message, level):
 		"""
 		The method outputs the message on file or console according with the log level and debug options
@@ -69,7 +69,17 @@ class repack_engine():
 			self.file_logger.critical(message)
 		
 		
-		
+		if self.log_dest == 'console' or self.args.debug:
+			if level=='info':
+				self.cons_logger.info(message)
+			elif level=='debug':
+				self.cons_logger.debug(message)
+			elif level=='warning':
+				self.cons_logger.warning(message)
+			elif level=='error':
+				self.cons_logger.error(message)
+			elif level=='critical':
+				self.cons_logger.critical(message)
 		
 	def __init_logger(self):
 		"""
@@ -85,6 +95,7 @@ class repack_engine():
 		log_dir = self.config["logging"]["log_dir"] 
 		log_level = self.config["logging"]["log_level"] 
 		log_dest = self.config["logging"]["log_dest"] 
+		self.log_dest = log_dest
 		log_days_keep = self.config["logging"]["log_days_keep"] 
 		log_name = "repack_%s" % (self.config_name)
 		log_file = os.path.expanduser('%s/%s.log' % (log_dir,log_name))
