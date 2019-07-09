@@ -1,22 +1,23 @@
-# repack procedure
+# REPACK PROCEDURE
 
-## static data
-* add a lock for share on the origin's table
+## STATIC DATA
+* add a ACCESS SHARE lock on the origin's table
 * create a new empty table in the repack schema
 * copy the data
 * build the indices
 
-## dynamic data
-* add a lock for share on the origin's table
+## DYNAMIC DATA
+* add a ACCESS SHARE lock on the origin's table
 * create a new empty table in the repack schema
-* create a collecting table with the same table's data type
-* create a trigger which collects the changes along with the transaction id
-* copy the data saving the transaction id of the start data copy
-* replay the data
-* for each index in the table build an index then replay the data 
-*  replay the last data
-* lock the origin table in exclusive mode
-* replay the final rows 
+* create a collecting table with the same origin table's data type
+* create a trigger on the origin table collecting the data changes associated with the transaction id
+* copy the data noting transaction id at the start of the data copy
+* build the primary or the unique key (compulsory for replaying the data)
+* replay the logged data on the destination's table
+* for each index on the source table, build that index on the destination table, then replay the logged data 
+*  when all the indices are in place, replay the last logged data
+* acquire an exclusive lock on the origin and destination table preventing the writes but not the reads
+* replay the last rows on the destination table
 * swap the relations
 * release the locks
 
