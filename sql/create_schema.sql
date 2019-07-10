@@ -108,3 +108,250 @@ SELECT
 ORDER BY 
 	blocking_age DESC
  ;
+
+ CREATE OR REPLACE VIEW v_tab_bloat AS
+SELECT
+    v_table,
+    v_schema,
+    rl_tab_tuples,
+    i_tab_pages,
+    i_pntr_size,
+    n_tuple_total_width,
+    dbl_nullhdr,
+    i_page_hdr,
+    n_block_size,
+    n_fill_factor,
+    round(dbl_tab_min_pages) as dbl_tab_min_pages,
+    pg_size_pretty((i_tab_pages*n_block_size)::bigint) as t_tab_size,
+    (i_tab_pages*n_block_size::bigint) as i_tab_size,
+    i_num_cols,
+    round(
+        CASE
+            WHEN
+                    dbl_tab_min_pages=0
+                OR  i_tab_pages=0
+            THEN
+                1.0
+        ELSE
+            i_tab_pages/dbl_tab_min_pages::numeric
+        END,
+        1)
+    AS n_tab_bloat,
+    CASE
+        WHEN
+            i_tab_pages < dbl_tab_min_pages
+        THEN
+            0
+        ELSE
+            round(i_tab_pages::bigint - dbl_tab_min_pages)
+    END AS i_tab_wasted_pages,
+    CASE
+        WHEN
+            i_tab_pages < dbl_tab_min_pages
+        THEN
+            0
+        ELSE
+            n_block_size*round(i_tab_pages::bigint - dbl_tab_min_pages)
+    END AS i_tab_wasted_bytes,
+    CASE
+        WHEN
+            i_tab_pages < dbl_tab_min_pages
+        THEN
+            pg_size_pretty(0::bigint)
+        ELSE
+            pg_size_pretty((n_block_size*round(i_tab_pages::bigint - dbl_tab_min_pages))::bigint)
+    END AS t_tab_wasted_bytes,
+    v_tbs
+
+FROM
+(
+    SELECT
+        v_table,
+        v_schema,
+        rl_tab_tuples,
+        i_tab_pages,
+        i_pntr_size,
+        n_tuple_total_width,
+        dbl_nullhdr,
+        i_page_hdr,
+        n_block_size,
+        n_fill_factor,
+        ceil((rl_tab_tuples*n_tuple_total_width)/((n_block_size-i_page_hdr-dbl_nullhdr)*n_fill_factor)) as dbl_tab_min_pages,
+        tab_oid,
+        i_num_cols,
+        v_tbs
+    FROM
+    (
+        SELECT
+            v_table,
+            v_schema,
+            i_avg_width,
+            r_null_frac,
+            i_hdr,
+            i_pntr_size,
+            n_block_size,
+            i_page_hdr,
+            dbl_tuple_width,
+            rl_max_null_frac,
+            i_nullhdr,
+            i_num_cols,
+            tab_oid,
+            n_fill_factor,
+            (t_dat.dbl_tuple_width+(t_dat.i_hdr+t_dat.i_pntr_size-(
+                                            CASE
+                                                 WHEN
+                                                t_dat.i_hdr%t_dat.i_pntr_size=0
+                                                 THEN
+                                                t_dat.i_pntr_size
+                                                 ELSE
+                                                t_dat.i_hdr%t_dat.i_pntr_size
+                                             END
+                                            )
+                        )
+            )::numeric AS n_tuple_total_width,
+            (t_dat.rl_max_null_frac*(t_dat.i_nullhdr+t_dat.i_pntr_size-(
+                                              CASE
+                                                WHEN
+                                                  t_dat.i_nullhdr%t_dat.i_pntr_size=0
+                                                THEN
+                                                  t_dat.i_pntr_size
+                                                ELSE
+                                                  t_dat.i_nullhdr%t_dat.i_pntr_size
+                                                END
+                                            )
+                                   )
+                        ) AS dbl_nullhdr,
+            rl_tab_tuples,
+            i_tab_pages,
+            v_tbs
+        FROM
+        (
+            SELECT
+                    v_table,
+                    v_schema,
+                    i_avg_width,
+                    r_null_frac,
+                    i_hdr,
+                    i_pntr_size,
+                    n_block_size,
+                    i_page_hdr,
+                    dbl_tuple_width,
+                    rl_max_null_frac,
+                    CASE
+                        WHEN
+                            r_null_frac<>0
+                        THEN
+                            i_hdr+1+i_num_cols/i_pntr_size
+                        ELSE
+                            0
+                    END AS i_nullhdr,
+                    i_num_cols,
+                    tab_oid,
+                    1::numeric as n_fill_factor, --ROUGLY APPROXIMATE 1 FOR ANYTHING
+                    rl_tab_tuples,
+                    i_tab_pages,
+                    CASE
+                        WHEN
+                            tbs_oid=0
+                        THEN
+                            (
+                                SELECT
+                                    spcname
+                                FROM
+                                    pg_tablespace
+                                    WHERE oid=(
+                                            SELECT
+                                                dattablespace
+                                            FROM
+                                                pg_database
+                                            WHERE
+                                                datname=current_database()
+                                            )
+                            )
+                        ELSE
+                            (
+                                SELECT
+                                    spcname
+                                FROM
+                                    pg_tablespace
+                                    WHERE oid=tbs_oid
+
+                            )
+                    END
+                        as v_tbs
+
+            FROM
+            (
+                SELECT
+                    tab.relname as v_table,
+                    sch.nspname as v_schema,
+                    sum(sts.avg_width) as i_avg_width,
+                    sum(sts.null_frac) as r_null_frac,
+                    (SELECT sum(attlen)+5 FROM pg_attribute WHERE attrelid=tab.oid AND attnum<0) as i_hdr,
+                    t_vrs.i_pntr_size,
+                    t_vrs.n_block_size,
+                    t_vrs.i_page_hdr,
+                    SUM((1-sts.null_frac)*sts.avg_width) AS dbl_tuple_width,
+                    MAX(null_frac) AS rl_max_null_frac,
+                    (SELECT count(*) FROM pg_attribute WHERE attrelid=tab.oid AND attnum>0) as i_num_cols,
+                    tab.oid as tab_oid,
+                    tab.reltuples as rl_tab_tuples,
+                    tab.relpages as i_tab_pages,
+                    tab.reltablespace as tbs_oid
+                FROM
+                    pg_class tab,
+                    pg_namespace sch,
+                    pg_stats sts,
+                    (
+                        SELECT
+                        (
+                            SELECT current_setting('block_size')::numeric) AS n_block_size,
+
+                            CASE
+                                WHEN
+                                    substring(t_ver,12,3) IN ('8.0','8.1','8.2')
+                                THEN
+                                    20
+                                WHEN
+                                    substring(t_ver,12,3) IN ('8.3','8.4','9.0','9.1','9.2')
+                                THEN
+                                    24
+                                ELSE
+                                    24
+                            END AS i_page_hdr,
+                            CASE
+                                WHEN
+                                        t_ver ~ 'mingw32'
+                                    OR  t_ver ~ '64-bit'
+                                THEN
+                                    8
+                                ELSE
+                                    4
+                            END AS i_pntr_size,
+                            substring(t_ver,12,3)
+                        FROM
+                        (
+                            SELECT
+                                version() AS t_ver
+                        ) t_version
+                    ) t_vrs
+                WHERE
+                        sts.tablename=tab.relname
+                    AND tab.relnamespace=sch.oid
+                    AND sch.nspname=sts.schemaname
+										AND tab.relkind='r'
+                GROUP BY
+                    tab.oid,
+                    t_vrs.i_pntr_size,
+                    t_vrs.n_block_size,
+                    t_vrs.i_page_hdr,
+                    tab.reltuples,
+                    tab.relpages,
+                    tab.reltablespace,
+                    tab.relname,
+                    sch.nspname
+            ) t_data
+        ) t_dat
+    )  t_tab
+) t_tab_blt
+;

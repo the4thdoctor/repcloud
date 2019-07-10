@@ -10,7 +10,8 @@ class pg_engine(object):
 		"""
 		python_lib=get_python_lib()
 		self.sql_dir = "%s/repcloud/sql/" % python_lib
-		
+		self.connections = None
+		self.__tab_list = None
 	def __check_replica_schema(self, db_handler):
 		"""
 		The method checks if the sch_chameleon exists
@@ -69,7 +70,8 @@ class pg_engine(object):
 		db_handler=self.__connect_db(connection)
 		schema_exists = self.__check_replica_schema(db_handler)
 		if schema_exists[0]:
-			print ("The repack schema is already created")
+			self.logger.args["log_dest"]="console"
+			self.logger.log_message("The repack schema is already created", 'warning')
 		else:
 			file_schema = open(self.sql_dir+"create_schema.sql", 'r')
 			sql_schema = file_schema.read()
@@ -84,7 +86,8 @@ class pg_engine(object):
 		"""
 		if coname == 'all':
 			for con in connection:
-				print('Creating the repack schema on %s' % con)
+				self.logger.args["log_dest"]="console"
+				self.logger.log_message('Creating the repack schema on %s' % con, 'info')
 				self.__create_repack_schema(connection[con])
 		else:
 			
@@ -98,6 +101,8 @@ class pg_engine(object):
 		db_handler=self.__connect_db(connection)
 		schema_exists = self.__check_replica_schema(db_handler)
 		if not schema_exists[0]:
+			self.logger.args["log_dest"]="console"
+			self.logger.log_message("The repack schema is does not exists", 'warning')
 			print ("The repack schema is does not exists")
 		else:
 			file_schema = open(self.sql_dir+"drop_schema.sql", 'r')
@@ -106,6 +111,62 @@ class pg_engine(object):
 			db_handler["cursor"].execute(sql_schema)
 		self.__disconnect_db(db_handler)
 	
+	def __get_repack_tables(self, con):
+		"""
+		The method generates a list of tables to repack using the parameters
+		tables and schemas within the connection string to filter them.
+		If both values are empty all the tables are returned.
+		"""
+		tables = self.connections[con]["tables"]
+		schemas = self.connections[con]["schemas"]
+		filter = []
+		db_handler = self.__connect_db(self.connections[con])
+		if len(tables)>0:
+			filter.append((db_handler["cursor"].mogrify("format('%%I.%%I',v_schema,v_table) = ANY(%s)",  (tables, ))).decode())
+		if len(schemas)>0:
+			filter.append((db_handler["cursor"].mogrify("v_schema = ANY(%s)",  (schemas, ))).decode())
+		if len(filter)>0:
+			sql_filter="WHERE %s" % " OR ".join(filter)
+			
+		sql_tab = """
+			SELECT 
+				format('%%I.%%I',v_schema,v_table),
+				v_schema,
+				v_table,
+				i_tab_size,
+				t_tab_size,
+				t_tab_wasted_bytes
+			FROM 
+				sch_repcloud.v_tab_bloat
+			%s
+			ORDER BY i_tab_wasted_bytes DESC
+		;""" % sql_filter
+		db_handler["cursor"].execute(sql_tab)
+		self.__tab_list = db_handler["cursor"].fetchall()
+		self.__disconnect_db(db_handler)
+	
+	def __create_new_table(self, db_handler, table):
+		"""
+			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
+		"""
+		sql_create="""SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
+		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
+	def __repack_tables(self, con):
+		"""
+			The method executes the repack operation for each table in self.tab_list
+		"""
+		db_handler = self.__connect_db(self.connections[con])
+		for table in self.__tab_list:
+			self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
+			self.__create_new_table(db_handler, table)
+		self.__disconnect_db(db_handler)
+		
+	def __repack_loop(self, con):
+		"""
+		The method loops trough the tables available for the connection
+		"""
+		self.__get_repack_tables(con)
+		self.__repack_tables(con)
 
 	def drop_repack_schema(self, connection, coname):
 		"""
@@ -114,7 +175,8 @@ class pg_engine(object):
 		"""
 		if coname == 'all':
 			for con in connection:
-				print('Dropping the repack schema on %s' % con)
+				self.logger.args["log_dest"]="console"
+				self.logger.log_message('Dropping the repack schema on %s' % con, 'info')
 				self.__drop_repack_schema(connection[con])
 		else:
 			
@@ -124,4 +186,5 @@ class pg_engine(object):
 	def repack_tables(self, connection, coname):
 		if coname == 'all':
 			for con in connection:
-				print('Repacking the tables for connection %s' % con)
+				self.logger.log_message('Repacking the tables for connection %s' % con, 'info')
+				self.__repack_loop(con)

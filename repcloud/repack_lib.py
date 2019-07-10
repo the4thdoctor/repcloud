@@ -9,6 +9,106 @@ from daemonize import Daemonize
 import logging
 from logging.handlers  import TimedRotatingFileHandler
 
+
+class rep_logger():
+	def __init__(self, args):
+		"""
+			Class constructor for the logging facility
+		"""
+		self.args = args 
+		self.__init_logger()
+
+
+	def __log_file(self, message, level):
+		"""
+		The method logs on file the message on file according with the log level 
+		"""
+		if level =='info':
+			self.file_logger.info(message)
+		elif level =='debug':
+			self.file_logger.debug(message)
+		elif level =='warning':
+			self.file_logger.warning(message)
+		elif level =='error':
+			self.file_logger.error(message)
+		elif level =='critical':
+			self.file_logger.critical(message)
+	
+	def __log_console(self, message, level):
+		"""
+			The method logs on file the message on the console according with the log level 
+		"""
+		if level =='info':
+			self.cons_logger.info(message)
+		elif level =='debug':
+			self.cons_logger.debug(message)
+		elif level =='warning':
+			self.cons_logger.warning(message)
+		elif level =='error':
+			self.cons_logger.error(message)
+		elif level =='critical':
+			self.cons_logger.critical(message)
+	
+	
+	def log_message(self, message, level='info'):
+		"""
+		The method outputs the message on log file or console.
+		The method always logs on file and output to console if the log destination is set to console
+		or the debug is enabled.
+		"""
+		self.__log_file(message, level)
+		if self.args["log_dest"]  == 'console' or self.args["debug"] :
+			self.__log_console(message, level)
+		
+	def __init_logger(self):
+		"""
+		The method initialise a new logger object using the configuration parameters.
+		The formatter is different if the debug option is enabler or not.
+		The method returns a new logger object and sets the logger's file descriptor in the class variable 
+		logger_fds, used when the process is demonised.
+		
+		:return: list with logger and file descriptor
+		:rtype: list
+
+		"""
+		log_dir = os.path.expanduser(self.args["log_dir"])
+		if not os.path.isdir(log_dir):
+			print ("creating directory %s" % log_dir)
+			os.makedirs(log_dir,  exist_ok=True)
+		log_level = self.args["log_level"] 
+		log_dest = self.args["log_dest"] 
+		
+		self.log_dest = log_dest
+		log_days_keep = self.args["log_days_keep"] 
+		log_name = "repack_%s" % (self.args["config_name"] )
+		log_file = '%s/%s.log' % (log_dir,log_name)
+		str_format = "%(asctime)s %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
+		formatter = logging.Formatter(str_format, "%Y-%m-%d %H:%M:%S")
+		
+		sh=logging.StreamHandler(sys.stdout)
+		fh = TimedRotatingFileHandler(log_file, when="d",interval=1,backupCount=log_days_keep)
+		if log_level=='debug' or self.args["debug"]:
+			fh.setLevel(logging.DEBUG)
+			sh.setLevel(logging.DEBUG)
+		elif log_level=='info':
+			fh.setLevel(logging.INFO)
+			sh.setLevel(logging.INFO)
+		elif log_level=='warning':
+			fh.setLevel(logging.WARNING)
+			sh.setLevel(logging.WARNING)
+		
+		self.file_logger = logging.getLogger('file')
+		self.cons_logger = logging.getLogger('console')
+		self.file_logger.setLevel(logging.DEBUG)
+		self.cons_logger.setLevel(logging.DEBUG)
+		fh.setFormatter(formatter)
+		sh.setFormatter(formatter)
+		
+		self.file_logger.addHandler(fh)
+		self.cons_logger.addHandler(sh)
+		self.file_logger_fds = fh.stream.fileno()
+		self.cons_logger_fds = sh.stream.fileno()
+
 class repack_engine():
 	def __init__(self,  args):
 		"""
@@ -50,80 +150,18 @@ class repack_engine():
 			self.config_file = "%s/%s.toml" % (local_conf,  self.args.config )
 		self.__load_config()
 		self.pg_engine = pg_engine()
-		self.__init_logger()
-		self. __log_message('Logger initialised', 'info')
 		
-	def __log_message(self, message, level):
-		"""
-		The method outputs the message on file or console according with the log level and debug options
-		"""
-		if level=='info':
-			self.file_logger.info(message)
-		elif level=='debug':
-			self.file_logger.debug(message)
-		elif level=='warning':
-			self.file_logger.warning(message)
-		elif level=='error':
-			self.file_logger.error(message)
-		elif level=='critical':
-			self.file_logger.critical(message)
+		log_args={}
+		log_args["log_dir"] = self.config["logging"]["log_dir"] 
+		log_args["log_dest"] = self.config["logging"]["log_dest"] 
+		log_args["log_level"] = self.config["logging"]["log_level"] 
+		log_args["log_days_keep"] = self.config["logging"]["log_days_keep"] 
+		log_args["config_name"] = self.config_name
+		log_args["debug"] = self.args.debug
+		self.logger = rep_logger(log_args)
+		self.pg_engine.logger = self.logger
 		
-		
-		if self.log_dest == 'console' or self.args.debug:
-			if level=='info':
-				self.cons_logger.info(message)
-			elif level=='debug':
-				self.cons_logger.debug(message)
-			elif level=='warning':
-				self.cons_logger.warning(message)
-			elif level=='error':
-				self.cons_logger.error(message)
-			elif level=='critical':
-				self.cons_logger.critical(message)
-		
-	def __init_logger(self):
-		"""
-		The method initialise a new logger object using the configuration parameters.
-		The formatter is different if the debug option is enabler or not.
-		The method returns a new logger object and sets the logger's file descriptor in the class variable 
-		logger_fds, used when the process is demonised.
-		
-		:return: list with logger and file descriptor
-		:rtype: list
-
-		"""
-		log_dir = self.config["logging"]["log_dir"] 
-		log_level = self.config["logging"]["log_level"] 
-		log_dest = self.config["logging"]["log_dest"] 
-		self.log_dest = log_dest
-		log_days_keep = self.config["logging"]["log_days_keep"] 
-		log_name = "repack_%s" % (self.config_name)
-		log_file = os.path.expanduser('%s/%s.log' % (log_dir,log_name))
-		str_format = "%(asctime)s %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
-		formatter = logging.Formatter(str_format, "%Y-%m-%d %H:%M:%S")
-		
-		sh=logging.StreamHandler(sys.stdout)
-		fh = TimedRotatingFileHandler(log_file, when="d",interval=1,backupCount=log_days_keep)
-		if log_level=='debug' or self.args.debug:
-			fh.setLevel(logging.DEBUG)
-			sh.setLevel(logging.DEBUG)
-		elif log_level=='info':
-			fh.setLevel(logging.INFO)
-			sh.setLevel(logging.INFO)
-		
-		self.file_logger = logging.getLogger('file')
-		self.cons_logger = logging.getLogger('console')
-		self.file_logger.setLevel(logging.DEBUG)
-		self.cons_logger.setLevel(logging.DEBUG)
-		fh.setFormatter(formatter)
-		sh.setFormatter(formatter)
-		
-		self.file_logger.addHandler(fh)
-		self.cons_logger.addHandler(sh)
-		self.file_logger_fds = fh.stream.fileno()
-		self.cons_logger_fds = sh.stream.fileno()
-		
-		
+	
 		
 	def __load_config(self):
 		"""
@@ -173,6 +211,7 @@ class repack_engine():
 		The method performs the repack 
 		"""
 		self.__check_connections()
+		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
 		
 	def create_schema(self):
