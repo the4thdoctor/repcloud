@@ -15,12 +15,13 @@ CREATE OR REPLACE VIEW v_version
 CREATE TABLE t_table_repack
 (
 	i_id_table	bigserial,
-	oid_table oid,
+	oid_old_table oid,
+	oid_new_table oid,
 	v_old_table_name character varying(100) NOT NULL,
 	v_new_table_name  character varying(100) NOT NULL,
 	v_schema_name character varying(100) NOT NULL,
 	t_create_identiy text,
-	t_create_iidx text[],
+	t_create_idx text[],
 	v_repack_step character varying(100),
 	v_status  character varying(100) ,
 	i_size_start bigint,
@@ -35,17 +36,19 @@ CREATE UNIQUE INDEX uidx_t_table_repack_table_schema ON t_table_repack(v_schema_
 
 
 CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
-RETURNS VOID as 
+RETURNS character varying(64) as 
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
 	p_t_table				ALIAS FOR $2;
 	v_new_table			character varying(64);
+	v_i_id_table			bigint;
 	t_sql_create 		text;
-	oid_old_table		oid;
+	v_oid_old_table	oid;
+	v_oid_new_table	oid;
 BEGIN
-	oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
-	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||oid_old_table::text);
+	v_oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
+	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||v_oid_old_table::text);
 	t_sql_create:=format('
 		CREATE TABLE IF NOT EXISTS sch_repcloud.%s
 			(LIKE %I.%I)',
@@ -55,16 +58,30 @@ BEGIN
 			
 		);
 	EXECUTE t_sql_create ;
-	INSERT INTO sch_repcloud.t_table_repack (oid_table,v_old_table_name,v_new_table_name,v_schema_name)
-		VALUES (oid_old_table,p_t_table,v_new_table,p_t_schema) 
+	v_oid_new_table:=format('sch_repcloud.%I',v_new_table)::regclass::oid;
+	INSERT INTO sch_repcloud.t_table_repack 
+		(
+			oid_old_table,
+			v_old_table_name,
+			oid_new_table,
+			v_new_table_name,
+			v_schema_name
+		)
+		VALUES 
+			(
+				v_oid_old_table,
+				p_t_table,
+				v_oid_new_table,
+				v_new_table,
+				p_t_schema
+			) 
 		ON CONFLICT (v_schema_name,v_old_table_name)
 			DO UPDATE 
 				SET 
 					v_new_table_name=v_new_table
-					
-			;
-		
-		
+	;	
+	RETURN v_new_table;
+	
 END
 $BODY$
 LANGUAGE plpgsql 
@@ -161,7 +178,8 @@ SELECT
         ELSE
             pg_size_pretty((n_block_size*round(i_tab_pages::bigint - dbl_tab_min_pages))::bigint)
     END AS t_tab_wasted_bytes,
-    v_tbs
+    v_tbs,
+	o_tab_oid
 
 FROM
 (
@@ -177,7 +195,7 @@ FROM
         n_block_size,
         n_fill_factor,
         ceil((rl_tab_tuples*n_tuple_total_width)/((n_block_size-i_page_hdr-dbl_nullhdr)*n_fill_factor)) as dbl_tab_min_pages,
-        tab_oid,
+        tab_oid as o_tab_oid,
         i_num_cols,
         v_tbs
     FROM

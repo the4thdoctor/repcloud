@@ -149,8 +149,17 @@ class pg_engine(object):
 		"""
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
 		"""
+		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
 		sql_create="""SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
 		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
+		new_table = db_handler["cursor"].fetchone()
+		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
+		sql_copy = """
+		INSERT INTO sch_repcloud.\"%s\" SELECT * FROM \"%s\".\"%s\";
+		ANALYZE sch_repcloud.\"%s\";
+		""" % (new_table[0], table[1],table[2],new_table[0],  )
+		db_handler["cursor"].execute(sql_copy)
+	
 	def __repack_tables(self, con):
 		"""
 			The method executes the repack operation for each table in self.tab_list
@@ -159,6 +168,29 @@ class pg_engine(object):
 		for table in self.__tab_list:
 			self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
 			self.__create_new_table(db_handler, table)
+			
+		sql_update_old_size="""
+			UPDATE sch_repcloud.t_table_repack
+			SET
+				i_size_start=blt.i_tab_size     
+			FROM  sch_repcloud.v_tab_bloat blt
+				WHERE
+					t_table_repack.oid_old_table =  blt.o_tab_oid
+			;
+
+			"""
+		sql_update_new_size="""
+			UPDATE sch_repcloud.t_table_repack
+			SET
+				i_size_end=blt.i_tab_size     
+			FROM  sch_repcloud.v_tab_bloat blt
+				WHERE
+					t_table_repack.oid_new_table =  blt.o_tab_oid
+			;
+
+			"""
+		db_handler["cursor"].execute(sql_update_old_size)
+		db_handler["cursor"].execute(sql_update_new_size)
 		self.__disconnect_db(db_handler)
 		
 	def __repack_loop(self, con):
