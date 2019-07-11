@@ -43,7 +43,8 @@ CREATE TABLE sch_repcloud.t_idx_repack (
 	b_idx_constraint bool NULL,
 	v_contype char(1) NULL,
 	t_index_name text NOT NULL,
-	t_index_def text NOT NULL,
+	t_index_def text NULL,
+	t_constraint_def text NULL,
 	CONSTRAINT pk_t_idx_repack PRIMARY KEY (i_id_index)
 );
 
@@ -106,7 +107,8 @@ BEGIN
 				b_idx_constraint,
 				v_contype,
 				t_index_name,
-				t_index_def		
+				t_index_def,
+				t_constraint_def
 			)
 
 		SELECT 
@@ -117,7 +119,8 @@ BEGIN
 			idx.b_idx_constraint,
 			idx.v_contype,
 			idx.t_index_name,
-			idx.t_index_def
+			idx.t_index_def,
+			t_constraint_def
 		FROM 
 			sch_repcloud.v_token_idx idx 
 			INNER JOIN	sch_repcloud.t_table_repack tab
@@ -148,7 +151,8 @@ SELECT
 	b_idx_constraint,
 	v_contype,
 	t_idx_token[2] AS t_index_name,
-	t_idx_token[4] AS t_index_def
+	t_idx_token[4] AS t_index_def,
+	t_constraint_def
 	
 FROM 
 ( 
@@ -167,6 +171,11 @@ FROM
 				TRUE
 		END AS b_idx_constraint,
 		con.contype AS v_contype,
+		CASE 
+			WHEN conname IS NOT NULL 
+			THEN 
+				pg_get_constraintdef(con.oid)
+		END AS t_constraint_def,
 		idx.indisunique AS b_indisunique
 		
 	FROM 
@@ -466,4 +475,54 @@ FROM
         ) t_dat
     )  t_tab
 ) t_tab_blt
+;
+
+CREATE OR REPLACE VIEW sch_repcloud.v_create_idx_cons
+AS
+SELECT 
+	CASE
+		WHEN b_idx_constraint
+		THEN
+			CASE 
+			WHEN v_contype IN ('p','u')
+			THEN
+			format(
+					'ALTER TABLE sch_repcloud.%I ADD CONSTRAINT %s %s;',
+					v_new_table_name,
+					t_index_name,
+					t_constraint_def
+				)
+			END
+		ELSE
+			format(
+					'CREATE INDEX %I ON sch_repcloud.%I USING %s;',
+					t_index_name,
+					v_new_table_name,
+					t_index_def
+			)
+
+	END AS t_create,
+	v_old_table_name,
+	v_new_table_name,
+	v_schema_name,
+	t_index_name
+
+FROM
+(
+SELECT 
+	tab.v_old_table_name,
+	tab.v_new_table_name,
+	tab.v_schema_name,
+	idx.v_table_name,
+	idx.b_indisunique,
+	idx.b_idx_constraint,
+	idx.t_index_name,
+	idx.t_index_def,
+	idx.v_contype,
+	idx.t_constraint_def
+FROM 
+	sch_repcloud.t_idx_repack idx
+	INNER JOIN sch_repcloud.t_table_repack tab
+		ON tab.i_id_table=idx.i_id_table
+) create_idx
 ;

@@ -152,9 +152,29 @@ class pg_engine(object):
 		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
 		sql_create="""SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
 		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
-		
 	
-	def __copy_table_Data(self, db_handler, table):
+	def __create_indices(self, db_handler, table):
+		"""
+		The method builds the new indices on the new table
+		"""
+		sql_get_idx = """
+			SELECT 
+				t_create,
+				v_new_table_name,
+				t_index_name
+			FROM 
+				sch_repcloud.v_create_idx_cons
+			WHERE 
+				v_schema_name=%s
+				AND v_old_table_name=%s
+			;
+		"""
+		db_handler["cursor"].execute(sql_get_idx,  (table[1], table[2], ))
+		idx_list = db_handler["cursor"].fetchall()
+		for index in idx_list:
+			self.logger.log_message('Creating index %s on table %s. ' % (index[1],index[2],  ), 'info')
+			db_handler["cursor"].execute(index[0])
+	def __copy_table_data(self, db_handler, table):
 		"""
 			The method copy the data from the origin's table to the new one
 		"""
@@ -188,7 +208,8 @@ class pg_engine(object):
 		for table in self.__tab_list:
 			self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
 			self.__create_new_table(db_handler, table)
-			self.__copy_table_Data(db_handler, table)
+			self.__copy_table_data(db_handler, table)
+			self.__create_indices(db_handler, table)
 			
 		sql_update_old_size="""
 			UPDATE sch_repcloud.t_table_repack
