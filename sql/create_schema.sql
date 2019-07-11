@@ -34,6 +34,22 @@ CREATE TABLE t_table_repack
 
 CREATE UNIQUE INDEX uidx_t_table_repack_table_schema ON t_table_repack(v_schema_name,v_old_table_name);
 
+CREATE TABLE sch_repcloud.t_idx_repack (
+	i_id_index	bigserial,
+	i_id_table	bigint NOT NULL,
+	v_table_name character varying(100) NOT NULL,
+	v_schema_name character varying(100) NOT NULL,
+	b_indisunique bool NULL,
+	b_idx_constraint bool NULL,
+	v_contype char(1) NULL,
+	t_index_name text NOT NULL,
+	t_index_def text NOT NULL,
+	CONSTRAINT pk_t_idx_repack PRIMARY KEY (i_id_index)
+);
+
+CREATE UNIQUE INDEX uidx_t_idx_repack_table_schema_INDEX ON t_idx_repack(v_schema_name,v_table_name,t_index_name);
+
+
 
 CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
 RETURNS character varying(64) as 
@@ -90,6 +106,50 @@ LANGUAGE plpgsql
 
 --VIEWS
 
+CREATE OR REPLACE VIEW v_token_idx AS
+SELECT 
+	v_table,
+	v_schema,
+	b_indisunique,
+	b_idx_constraint,
+	v_contype,
+	t_idx_token[2] AS t_index_name,
+	t_idx_token[4] AS t_index_def
+	
+FROM 
+( 
+	SELECT
+		tab.relname AS v_table,
+		sch.nspname AS v_schema,
+		regexp_match(
+			pg_get_indexdef(ind.oid),
+			'(CREATE.*INDEX )(.*?)( ON.*? USING.*?)(.*?)'
+		) AS t_idx_token,
+		CASE 
+			WHEN conname IS NULL 
+			THEN 
+				FALSE
+			ELSE 
+				TRUE
+		END AS b_idx_constraint,
+		con.contype AS v_contype,
+		idx.indisunique AS b_indisunique
+		
+	FROM 
+		pg_class tab 
+		INNER JOIN pg_namespace sch 
+			ON sch.oid=tab.relnamespace
+		LEFT OUTER JOIN pg_index idx 
+			ON idx.indrelid=tab.oid
+		LEFT OUTER JOIN pg_class ind 
+			ON ind.oid=idx.indexrelid
+		LEFT OUTER JOIN pg_constraint con 
+			ON	tab.oid=con.conrelid
+			AND ind.oid=con.conindid
+) idx
+;
+
+
 CREATE OR REPLACE VIEW v_blocking_pids as
 SELECT 
 	blocked_locks.pid     AS blocked_pid,
@@ -126,7 +186,7 @@ ORDER BY
 	blocking_age DESC
  ;
 
- CREATE OR REPLACE VIEW v_tab_bloat AS
+CREATE OR REPLACE VIEW v_tab_bloat AS
 SELECT
     v_table,
     v_schema,
