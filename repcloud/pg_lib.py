@@ -152,13 +152,33 @@ class pg_engine(object):
 		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
 		sql_create="""SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
 		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
+		
+	
+	def __copy_table_Data(self, db_handler, table):
+		"""
+			The method copy the data from the origin's table to the new one
+		"""
+		sql_get_new_tab = """
+			SELECT 
+				v_new_table_name 
+			FROM 
+				sch_repcloud.t_table_repack 
+			WHERE 
+					
+					v_schema_name=%s
+				AND v_old_table_name=%s 
+			;
+		"""
+		db_handler["cursor"].execute(sql_get_new_tab,  (table[1], table[2], ))
 		new_table = db_handler["cursor"].fetchone()
 		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
 		sql_copy = """
-		INSERT INTO sch_repcloud.\"%s\" SELECT * FROM \"%s\".\"%s\";
-		ANALYZE sch_repcloud.\"%s\";
+			INSERT INTO sch_repcloud.\"%s\" SELECT * FROM \"%s\".\"%s\";
+			ANALYZE sch_repcloud.\"%s\";
 		""" % (new_table[0], table[1],table[2],new_table[0],  )
 		db_handler["cursor"].execute(sql_copy)
+	
+		
 	
 	def __repack_tables(self, con):
 		"""
@@ -168,6 +188,7 @@ class pg_engine(object):
 		for table in self.__tab_list:
 			self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
 			self.__create_new_table(db_handler, table)
+			self.__copy_table_Data(db_handler, table)
 			
 		sql_update_old_size="""
 			UPDATE sch_repcloud.t_table_repack
@@ -189,6 +210,7 @@ class pg_engine(object):
 			;
 
 			"""
+			
 		db_handler["cursor"].execute(sql_update_old_size)
 		db_handler["cursor"].execute(sql_update_new_size)
 		self.__disconnect_db(db_handler)

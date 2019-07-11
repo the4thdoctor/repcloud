@@ -52,7 +52,7 @@ CREATE UNIQUE INDEX uidx_t_idx_repack_table_schema_INDEX ON t_idx_repack(v_schem
 
 
 CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
-RETURNS character varying(64) as 
+RETURNS VOID as 
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
@@ -96,7 +96,41 @@ BEGIN
 				SET 
 					v_new_table_name=v_new_table
 	;	
-	RETURN v_new_table;
+
+	INSERT INTO sch_repcloud.t_idx_repack
+			(
+				i_id_table,
+				v_table_name,
+				v_schema_name,
+				b_indisunique,
+				b_idx_constraint,
+				v_contype,
+				t_index_name,
+				t_index_def		
+			)
+
+		SELECT 
+			tab.i_id_table,
+			tab.v_new_table_name,
+			tab.v_schema_name,
+			idx.b_indisunique,
+			idx.b_idx_constraint,
+			idx.v_contype,
+			idx.t_index_name,
+			idx.t_index_def
+		FROM 
+			sch_repcloud.v_token_idx idx 
+			INNER JOIN	sch_repcloud.t_table_repack tab
+				ON 
+						tab.v_old_table_name=idx.v_table
+					AND	tab.v_schema_name=idx.v_schema
+			WHERE 
+					tab.v_old_table_name=p_t_table
+				AND	tab.v_schema_name=p_t_schema
+				
+		ON CONFLICT DO NOTHING
+		;
+
 	
 END
 $BODY$
