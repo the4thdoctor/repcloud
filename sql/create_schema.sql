@@ -527,10 +527,10 @@ FROM
 ) create_idx
 ;
 
-CREATE OR REPLACE VIEW sch_repcloud.v_add_fkeys AS
+CREATE OR REPLACE VIEW sch_repcloud.v_tab_fkeys AS
 	SELECT DISTINCT
 		format('ALTER TABLE ONLY sch_repcloud.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,
-		format('ALTER TABLE ONLY sch_repcloud.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_validate,
+		format('ALTER TABLE ONLY sch_repcloud.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname) AS t_con_validate,
 		tab.relname as v_table_name,
 		sch.nspname as v_schema_name,
 		conname AS v_con_name
@@ -539,18 +539,57 @@ CREATE OR REPLACE VIEW sch_repcloud.v_add_fkeys AS
 		pg_class tab
 		INNER JOIN pg_namespace sch
 			ON sch.oid=tab.relnamespace
-		INNER JOIN pg_depend dep
-			ON tab.oid=dep.refobjid
 		INNER JOIN pg_constraint con
 			ON
-				con.oid=dep.objid
-			AND	con.connamespace=tab.relnamespace
+				con.connamespace=tab.relnamespace
 			AND	con.conrelid=tab.oid
 		INNER JOIN sch_repcloud.t_table_repack rep
 			ON tab.oid=rep.oid_old_table 
-	WHERE 	
+	WHERE
+		con.contype in ('f')
+;
 
-			dep.classid::regclass='pg_constraint'::regclass
-		AND 	con.contype in ('f')
-		AND	dep.deptype IN ('n','a')
+
+
+CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
+	SELECT 
+		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repcloud.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
+		format('ALTER TABLE ONLY %I.%I RENAME CONSTRAINT %I TO %I;',v_schema_name,v_referencing_table ,v_con_name,v_con_name::character varying(40)||'_old' ) AS t_con_rename,
+		format('ALTER TABLE ONLY sch_repcloud.%I VALIDATE CONSTRAINT %I ;',v_new_ref_table ,v_con_name) AS t_con_validate,
+		v_old_ref_table,
+		v_schema_name,
+		v_con_name,
+		v_new_ref_table,
+		v_referencing_table
+	FROM
+		(
+		SELECT 
+			pg_get_constraintdef(con.oid) AS condef, 
+			regexp_match(
+				pg_get_constraintdef(con.oid),
+				'(FOREIGN KEY\s*\(.*?\)\s*REFERENCES)\s*(.*)(\(.*)'
+			) AS t_con_token,
+			repr.v_old_table_name as v_referencing_table,
+			sch.nspname as v_schema_name,
+			con.conname AS v_con_name,
+			rep.v_new_table_name AS v_new_ref_table,
+			rep.v_old_table_name AS v_old_ref_table
+		
+		FROM
+		pg_class tab
+		INNER JOIN pg_namespace sch
+			ON sch.oid=tab.relnamespace
+		INNER JOIN pg_constraint con
+			ON
+				con.connamespace=tab.relnamespace
+			AND	con.confrelid=tab.oid
+		INNER JOIN sch_repcloud.t_table_repack rep
+			 ON con.confrelid=rep.oid_old_table 
+		INNER JOIN sch_repcloud.t_table_repack repr
+		 ON con.conrelid=repr.oid_old_table 
+	
+		WHERE
+				con.contype in ('f')
+	
+		) con
 ;
