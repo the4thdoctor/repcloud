@@ -563,33 +563,31 @@ CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
 		v_referencing_table
 	FROM
 		(
-		SELECT 
-			pg_get_constraintdef(con.oid) AS condef, 
-			regexp_match(
-				pg_get_constraintdef(con.oid),
-				'(FOREIGN KEY\s*\(.*?\)\s*REFERENCES)\s*(.*)(\(.*)'
-			) AS t_con_token,
-			repr.v_old_table_name as v_referencing_table,
-			sch.nspname as v_schema_name,
-			con.conname AS v_con_name,
-			rep.v_new_table_name AS v_new_ref_table,
-			rep.v_old_table_name AS v_old_ref_table
-		
-		FROM
-		pg_class tab
-		INNER JOIN pg_namespace sch
-			ON sch.oid=tab.relnamespace
-		INNER JOIN pg_constraint con
-			ON
-				con.connamespace=tab.relnamespace
-			AND	con.confrelid=tab.oid
-		INNER JOIN sch_repcloud.t_table_repack rep
-			 ON con.confrelid=rep.oid_old_table 
-		INNER JOIN sch_repcloud.t_table_repack repr
-		 ON con.conrelid=repr.oid_old_table 
-	
-		WHERE
-				con.contype in ('f')
-	
+			SELECT 
+				pg_get_constraintdef(con.oid) AS condef, 
+				regexp_match(
+					pg_get_constraintdef(con.oid),
+					'(FOREIGN KEY\s*\(.*?\)\s*REFERENCES)\s*(.*)(\(.*)'
+				) AS t_con_token,
+				tabr.relname as v_referencing_table,
+				sch.nspname as v_schema_name,
+				con.conname AS v_con_name,
+				rep.v_new_table_name AS v_new_ref_table,
+				rep.v_old_table_name AS v_old_ref_table
+			
+			FROM
+			pg_class tab
+			INNER JOIN pg_namespace sch
+				ON sch.oid=tab.relnamespace
+			INNER JOIN pg_constraint con
+				ON
+					con.connamespace=tab.relnamespace
+				AND	con.confrelid=tab.oid
+			INNER JOIN sch_repcloud.t_table_repack rep
+				 ON con.confrelid=rep.oid_old_table 
+			INNER JOIN pg_class tabr
+				ON  con.conrelid=tabr.oid
+				WHERE
+					con.contype in ('f')
 		) con
 ;

@@ -271,8 +271,6 @@ class pg_engine(object):
 			self.__copy_table_data(db_handler, table)
 			self.__create_indices(db_handler, table)
 			self.__create_tab_fkeys(db_handler, table)
-		
-		for table in self.__tab_list:
 			self.__create_ref_fkeys(db_handler, table)
 			
 		sql_update_old_size="""
