@@ -259,7 +259,38 @@ class pg_engine(object):
 			self.logger.log_message('Validating the foreign  key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
 			db_handler["cursor"].execute(fkey[2])		
 
-	
+	def __swap_tables(self, db_handler, table):
+		"""
+			The method swaps the tables
+		"""
+		sql_swap="""
+		SELECT 
+			format('ALTER TABLE %%I.%%I SET SCHEMA sch_drop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
+			format('ALTER TABLE sch_repcloud.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
+			format('ALTER TABLE sch_repcloud.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+			format('DROP TABLE sch_drop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+			v_schema_name,
+			v_old_table_name,
+			v_new_table_name
+		FROM 
+			sch_repcloud.t_table_repack
+		WHERE	
+					v_schema_name=%s
+				AND v_old_table_name=%s
+			;
+		"""
+		db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
+		tab_swap= db_handler["cursor"].fetchall()
+		for tswap in tab_swap:
+			self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
+			self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
+			self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
+			self.logger.log_message("drop old table: %s" %tswap[3], 'debug')
+			db_handler["cursor"].execute(tswap[0])		
+			db_handler["cursor"].execute(tswap[1])		
+			db_handler["cursor"].execute(tswap[2])		
+			db_handler["cursor"].execute(tswap[3])		
+			
 	def __repack_tables(self, con):
 		"""
 			The method executes the repack operation for each table in self.tab_list
@@ -272,6 +303,7 @@ class pg_engine(object):
 			self.__create_indices(db_handler, table)
 			self.__create_tab_fkeys(db_handler, table)
 			self.__create_ref_fkeys(db_handler, table)
+			self.__swap_tables(db_handler, table)
 			
 		sql_update_old_size="""
 			UPDATE sch_repcloud.t_table_repack

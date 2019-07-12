@@ -1,5 +1,6 @@
 --CREATE SCHEMA
 CREATE SCHEMA IF NOT EXISTS sch_repcloud;
+CREATE SCHEMA IF NOT EXISTS sch_drop;
 
 SET search_path=sch_repcloud;
 --VIEWS
