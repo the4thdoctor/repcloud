@@ -526,3 +526,31 @@ FROM
 		ON tab.i_id_table=idx.i_id_table
 ) create_idx
 ;
+
+CREATE OR REPLACE VIEW sch_repcloud.v_add_fkeys AS
+	SELECT DISTINCT
+		format('ALTER TABLE ONLY sch_repcloud.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,
+		format('ALTER TABLE ONLY sch_repcloud.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_validate,
+		tab.relname as v_table_name,
+		sch.nspname as v_schema_name,
+		conname AS v_con_name
+
+	FROM
+		pg_class tab
+		INNER JOIN pg_namespace sch
+			ON sch.oid=tab.relnamespace
+		INNER JOIN pg_depend dep
+			ON tab.oid=dep.refobjid
+		INNER JOIN pg_constraint con
+			ON
+				con.oid=dep.objid
+			AND	con.connamespace=tab.relnamespace
+			AND	con.conrelid=tab.oid
+		INNER JOIN sch_repcloud.t_table_repack rep
+			ON tab.oid=rep.oid_old_table 
+	WHERE 	
+
+			dep.classid::regclass='pg_constraint'::regclass
+		AND 	con.contype in ('f')
+		AND	dep.deptype IN ('n','a')
+;
