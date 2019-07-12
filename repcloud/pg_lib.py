@@ -174,6 +174,7 @@ class pg_engine(object):
 		for index in idx_list:
 			self.logger.log_message('Creating index %s on table %s. ' % (index[1],index[2],  ), 'info')
 			db_handler["cursor"].execute(index[0])
+			
 	def __copy_table_data(self, db_handler, table):
 		"""
 			The method copy the data from the origin's table to the new one
@@ -198,7 +199,66 @@ class pg_engine(object):
 		""" % (new_table[0], table[1],table[2],new_table[0],  )
 		db_handler["cursor"].execute(sql_copy)
 	
-		
+	def __create_tab_fkeys(self, db_handler, table):
+		"""
+		The method builds the foreign keys from the new table to the existing tables
+		"""
+		sql_get_fkeys = """
+			SELECT 
+				t_con_create,
+				t_con_validate,
+				v_schema_name,
+				v_table_name,
+				v_con_name
+			FROM
+				sch_repcloud.v_tab_fkeys 
+			WHERE	
+					v_schema_name=%s
+				AND v_table_name=%s
+			;
+		"""
+		db_handler["cursor"].execute(sql_get_fkeys,  (table[1], table[2], ))
+		fk_list = db_handler["cursor"].fetchall()
+		for fkey in fk_list:
+			self.logger.log_message('Creating foreign  key %s on table %s. ' % (fkey[4],fkey[3],  ), 'info')
+			db_handler["cursor"].execute(fkey[0])		
+			self.logger.log_message('Validating the foreign  key %s on table %s. ' % (fkey[4],fkey[3],  ), 'info')
+			db_handler["cursor"].execute(fkey[1])		
+	
+	def __create_ref_fkeys(self, db_handler, table):
+		"""
+		The method builds the referencing foreign keys from the existing  to the new table 
+		"""
+		sql_get_fkeys = """
+			SELECT 
+				t_con_rename,
+				t_con_create,
+				t_con_validate,
+				v_old_ref_table,
+				v_schema_name,
+				v_con_name,
+				v_new_ref_table,
+				v_referencing_table
+			FROM
+				sch_repcloud.v_tab_ref_fkeys 
+			WHERE	
+					v_schema_name=%s
+				AND v_old_ref_table=%s
+			;
+		"""
+		db_handler["cursor"].execute(sql_get_fkeys,  (table[1], table[2], ))
+		fk_list = db_handler["cursor"].fetchall()
+		for fkey in fk_list:
+			self.logger.log_message("rename: %s" %fkey[0], 'debug')
+			self.logger.log_message("create: %s" %fkey[1], 'debug')
+			self.logger.log_message("validate: %s" %fkey[2], 'debug')
+			self.logger.log_message('Renaming the existing foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
+			db_handler["cursor"].execute(fkey[0])		
+			self.logger.log_message('Creating foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
+			db_handler["cursor"].execute(fkey[1])		
+			self.logger.log_message('Validating the foreign  key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
+			db_handler["cursor"].execute(fkey[2])		
+
 	
 	def __repack_tables(self, con):
 		"""
@@ -210,6 +270,10 @@ class pg_engine(object):
 			self.__create_new_table(db_handler, table)
 			self.__copy_table_data(db_handler, table)
 			self.__create_indices(db_handler, table)
+			self.__create_tab_fkeys(db_handler, table)
+		
+		for table in self.__tab_list:
+			self.__create_ref_fkeys(db_handler, table)
 			
 		sql_update_old_size="""
 			UPDATE sch_repcloud.t_table_repack

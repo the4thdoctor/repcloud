@@ -68,7 +68,7 @@ BEGIN
 	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||v_oid_old_table::text);
 	t_sql_create:=format('
 		CREATE TABLE IF NOT EXISTS sch_repcloud.%s
-			(LIKE %I.%I)',
+			(LIKE %I.%I )',
 			v_new_table,
 			p_t_schema,
 			p_t_table
@@ -555,7 +555,7 @@ CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
 	SELECT 
 		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repcloud.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
 		format('ALTER TABLE ONLY %I.%I RENAME CONSTRAINT %I TO %I;',v_schema_name,v_referencing_table ,v_con_name,v_con_name::character varying(40)||'_old' ) AS t_con_rename,
-		format('ALTER TABLE ONLY sch_repcloud.%I VALIDATE CONSTRAINT %I ;',v_new_ref_table ,v_con_name) AS t_con_validate,
+		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_schema_name,v_referencing_table,v_con_name) AS t_con_validate,
 		v_old_ref_table,
 		v_schema_name,
 		v_con_name,
