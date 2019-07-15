@@ -1,6 +1,7 @@
 --CREATE SCHEMA
 CREATE SCHEMA IF NOT EXISTS sch_repcloud;
-CREATE SCHEMA IF NOT EXISTS sch_drop;
+CREATE SCHEMA IF NOT EXISTS sch_repdrop;
+CREATE SCHEMA IF NOT EXISTS sch_repnew;
 
 SET search_path=sch_repcloud;
 --VIEWS
@@ -52,31 +53,58 @@ CREATE TABLE sch_repcloud.t_idx_repack (
 CREATE UNIQUE INDEX uidx_t_idx_repack_table_schema_INDEX ON t_idx_repack(v_schema_name,v_table_name,t_index_name);
 
 
-
 CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
 RETURNS VOID as 
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
-	p_t_table				ALIAS FOR $2;
+	p_t_table			ALIAS FOR $2;
 	v_new_table			character varying(64);
-	v_i_id_table			bigint;
+	v_i_id_table		bigint;
 	t_sql_create 		text;
-	v_oid_old_table	oid;
-	v_oid_new_table	oid;
+	t_sql_alter 		text;
+	v_oid_old_table		oid;
+	v_oid_new_table		oid;
+	v_r_sequences		record;
+	v_t_seq_name		text[];
 BEGIN
 	v_oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
 	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||v_oid_old_table::text);
 	t_sql_create:=format('
-		CREATE TABLE IF NOT EXISTS sch_repcloud.%s
-			(LIKE %I.%I )',
+		CREATE TABLE IF NOT EXISTS sch_repnew.%s
+			(LIKE %I.%I INCLUDING CONSTRAINTS)',
 			v_new_table,
 			p_t_schema,
 			p_t_table
 			
 		);
 	EXECUTE t_sql_create ;
-	v_oid_new_table:=format('sch_repcloud.%I',v_new_table)::regclass::oid;
+	v_t_seq_name:=(
+		SELECT 
+			ARRAY[refname,secatt]::text[]
+		FROM 
+			sch_repcloud.v_serials 
+		WHERE 
+			refobjid=v_oid_old_table
+	 );
+	t_sql_create:=format('
+		CREATE SEQUENCE sch_repnew.%s;',
+		v_t_seq_name[1]
+	);
+	t_sql_alter=format('ALTER TABLE sch_repnew.%I ALTER COLUMN %I SET DEFAULT(nextval(''sch_repnew.%I''::regclass));',
+	v_new_table,
+	v_t_seq_name[2],
+	v_t_seq_name[1]
+	);
+	EXECUTE t_sql_create;
+	EXECUTE t_sql_alter ;
+	
+	t_sql_alter=format('ALTER SEQUENCE sch_repnew.%I OWNED BY sch_repnew.%I.%I;',
+	v_t_seq_name[1],
+	v_new_table,
+	v_t_seq_name[2]);
+	EXECUTE t_sql_alter ;
+	v_oid_new_table:=format('sch_repnew.%I',v_new_table)::regclass::oid;
 	INSERT INTO sch_repcloud.t_table_repack 
 		(
 			oid_old_table,
@@ -140,7 +168,6 @@ END
 $BODY$
 LANGUAGE plpgsql 
 ;
-
 
 --VIEWS
 
@@ -488,7 +515,7 @@ SELECT
 			WHEN v_contype IN ('p','u')
 			THEN
 			format(
-					'ALTER TABLE sch_repcloud.%I ADD CONSTRAINT %s %s;',
+					'ALTER TABLE sch_repnew.%I ADD CONSTRAINT %s %s;',
 					v_new_table_name,
 					t_index_name,
 					t_constraint_def
@@ -496,7 +523,7 @@ SELECT
 			END
 		ELSE
 			format(
-					'CREATE INDEX %I ON sch_repcloud.%I USING %s;',
+					'CREATE INDEX %I ON sch_repnew.%I USING %s;',
 					t_index_name,
 					v_new_table_name,
 					t_index_def
@@ -530,8 +557,8 @@ FROM
 
 CREATE OR REPLACE VIEW sch_repcloud.v_tab_fkeys AS
 	SELECT DISTINCT
-		format('ALTER TABLE ONLY sch_repcloud.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,
-		format('ALTER TABLE ONLY sch_repcloud.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname) AS t_con_validate,
+		format('ALTER TABLE ONLY sch_repnew.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,
+		format('ALTER TABLE ONLY sch_repnew.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname) AS t_con_validate,
 		tab.relname as v_table_name,
 		sch.nspname as v_schema_name,
 		conname AS v_con_name
@@ -554,7 +581,7 @@ CREATE OR REPLACE VIEW sch_repcloud.v_tab_fkeys AS
 
 CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
 	SELECT 
-		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repcloud.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
+		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
 		format('ALTER TABLE ONLY %I.%I RENAME CONSTRAINT %I TO %I;',v_schema_name,v_referencing_table ,v_con_name,v_con_name::character varying(40)||'_old' ) AS t_con_rename,
 		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_schema_name,v_referencing_table,v_con_name) AS t_con_validate,
 		v_old_ref_table,
@@ -591,4 +618,78 @@ CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
 				WHERE
 					con.contype in ('f')
 		) con
+;
+
+/*
+View to get the serials adapted from pgadmin3's query to get referenced objects
+*/
+
+CREATE OR REPLACE VIEW sch_repcloud.v_serials 
+AS 
+SELECT 
+	* 
+FROM 
+(
+	SELECT DISTINCT 
+	 	dep.deptype, 
+		dep.classid, 
+		dep.objid,
+		dep.refclassid,
+		dep.refobjid,
+		ad.adsrc,
+		cl.relkind, 
+		(SELECT attname FROM pg_catalog.pg_attribute WHERE (attrelid,attnum)=(SELECT adrelid,adnum FROM pg_attrdef WHERE oid=depref.objid)) AS secatt,
+		COALESCE(coc.relname, clrw.relname) AS ownertable,
+		CASE
+			WHEN 
+					cl.relname IS NOT NULL 
+				AND att.attname IS NOT NULL 
+			THEN 
+				cl.relname || '.' || att.attname 
+			ELSE 
+				COALESCE(cl.relname, co.conname, pr.proname, tg.tgname, ty.typname, la.lanname, rw.rulename, ns.nspname) 
+		END AS refname,
+		COALESCE(nsc.nspname, nso.nspname, nsp.nspname, nst.nspname, nsrw.nspname) AS nspname
+	FROM pg_depend dep
+		LEFT JOIN pg_class cl 
+			ON dep.objid=cl.oid
+		LEFT JOIN pg_attribute att 
+			ON dep.objid=att.attrelid AND dep.objsubid=att.attnum
+		LEFT JOIN pg_namespace nsc 
+			ON cl.relnamespace=nsc.oid
+		LEFT JOIN pg_proc pr 
+			ON dep.objid=pr.oid
+		LEFT JOIN pg_namespace nsp 
+			ON pr.pronamespace=nsp.oid
+		LEFT JOIN pg_trigger tg 
+			ON dep.objid=tg.oid
+		LEFT JOIN pg_type ty 
+			ON dep.objid=ty.oid
+		LEFT JOIN pg_namespace nst 
+			ON ty.typnamespace=nst.oid
+		LEFT JOIN pg_constraint co 
+			ON dep.objid=co.oid
+		LEFT JOIN pg_class coc 
+			ON co.conrelid=coc.oid
+		LEFT JOIN pg_namespace nso 
+			ON co.connamespace=nso.oid
+		LEFT JOIN pg_rewrite rw 
+			ON dep.objid=rw.oid
+		LEFT JOIN pg_class clrw 
+			ON clrw.oid=rw.ev_class
+		LEFT JOIN pg_namespace nsrw 
+			ON clrw.relnamespace=nsrw.oid
+		LEFT JOIN pg_language la 
+			ON dep.objid=la.oid
+		LEFT JOIN pg_namespace ns 
+			ON dep.objid=ns.oid
+		LEFT JOIN pg_attrdef ad 
+			ON ad.oid=dep.objid
+		INNER JOIN pg_catalog.pg_depend depref
+			ON dep.objid=depref.refobjid
+
+)ser
+WHERE 
+		relkind='S'
+	AND secatt IS NOT NULL
 ;

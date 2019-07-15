@@ -194,8 +194,8 @@ class pg_engine(object):
 		new_table = db_handler["cursor"].fetchone()
 		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
 		sql_copy = """
-			INSERT INTO sch_repcloud.\"%s\" SELECT * FROM \"%s\".\"%s\";
-			ANALYZE sch_repcloud.\"%s\";
+			INSERT INTO sch_repnew.\"%s\" SELECT * FROM \"%s\".\"%s\";
+			ANALYZE sch_repnew.\"%s\";
 		""" % (new_table[0], table[1],table[2],new_table[0],  )
 		db_handler["cursor"].execute(sql_copy)
 	
@@ -265,10 +265,10 @@ class pg_engine(object):
 		"""
 		sql_swap="""
 		SELECT 
-			format('ALTER TABLE %%I.%%I SET SCHEMA sch_drop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
-			format('ALTER TABLE sch_repcloud.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
-			format('ALTER TABLE sch_repcloud.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
-			format('DROP TABLE sch_drop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+			format('ALTER TABLE %%I.%%I SET SCHEMA sch_repdrop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
+			format('ALTER TABLE sch_repnew.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
+			format('ALTER TABLE sch_repnew.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+			format('DROP TABLE sch_repdrop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
 			v_schema_name,
 			v_old_table_name,
 			v_new_table_name
