@@ -52,6 +52,16 @@ CREATE TABLE sch_repcloud.t_idx_repack (
 
 CREATE UNIQUE INDEX uidx_t_idx_repack_table_schema_INDEX ON t_idx_repack(v_schema_name,v_table_name,t_index_name);
 
+CREATE TABLE sch_repcloud.t_view_def (
+	i_id_view	bigserial,
+	i_id_table	bigint NOT NULL,
+	v_view_name CHARACTER VARYING (100),
+	t_change_schema text NOT NULL,
+	t_create_view text NOT NULL,
+	CONSTRAINT pk_t_view_def PRIMARY KEY (i_id_view)
+);
+
+
 
 CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
 RETURNS VOID as 
@@ -125,8 +135,28 @@ BEGIN
 			DO UPDATE 
 				SET 
 					v_new_table_name=v_new_table
+		RETURNING i_id_table INTO v_i_id_table
 	;	
 
+	INSERT INTO sch_repcloud.t_view_def
+		(
+			i_id_table,
+			v_view_name,
+			t_change_schema,
+			t_create_view
+		)
+	SELECT 
+		v_i_id_table,
+		relname,
+		t_change_schema,
+		t_create_view
+	FROM	
+		sch_repcloud.v_get_dep_views
+	WHERE	
+		refobjid=v_oid_old_table
+	;
+		
+		
 	INSERT INTO sch_repcloud.t_idx_repack
 			(
 				i_id_table,
@@ -621,7 +651,7 @@ CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
 ;
 
 /*
-View to get the serials adapted from pgadmin3's query to get referenced objects
+Views to get dependencies adapted from pgadmin3's query to get referenced objects
 */
 
 CREATE OR REPLACE VIEW sch_repcloud.v_serials 
@@ -692,4 +722,65 @@ FROM
 WHERE 
 		relkind='S'
 	AND secatt IS NOT NULL
+;
+
+
+CREATE OR REPLACE VIEW v_get_dep_views
+AS
+	SELECT DISTINCT 
+		clv.relname,
+		nspv.nspname,
+	 	dep.deptype, 
+		dep.classid, 
+		dep.objid,
+		dep.refclassid,
+		dep.refobjid,
+		ad.adsrc,
+		cl.relkind,
+		format('ALTER VIEW %I.%I SET SCHEMA sch_repdrop;',nspv.nspname,clv.relname ) AS t_change_schema,
+		format('CREATE VIEW %I.%I AS %s;',nspv.nspname,clv.relname,pg_get_viewdef(clv.oid)) AS t_create_view
+
+	FROM pg_depend dep
+		LEFT JOIN pg_class cl 
+			ON dep.objid=cl.oid
+		LEFT JOIN pg_attribute att 
+			ON dep.objid=att.attrelid AND dep.objsubid=att.attnum
+		LEFT JOIN pg_namespace nsc 
+			ON cl.relnamespace=nsc.oid
+		LEFT JOIN pg_proc pr 
+			ON dep.objid=pr.oid
+		LEFT JOIN pg_namespace nsp 
+			ON pr.pronamespace=nsp.oid
+		LEFT JOIN pg_trigger tg 
+			ON dep.objid=tg.oid
+		LEFT JOIN pg_type ty 
+			ON dep.objid=ty.oid
+		LEFT JOIN pg_namespace nst 
+			ON ty.typnamespace=nst.oid
+		LEFT JOIN pg_constraint co 
+			ON dep.objid=co.oid
+		LEFT JOIN pg_class coc 
+			ON co.conrelid=coc.oid
+		LEFT JOIN pg_namespace nso 
+			ON co.connamespace=nso.oid
+		LEFT JOIN pg_rewrite rw 
+			ON dep.objid=rw.oid
+		LEFT JOIN pg_class clrw 
+			ON clrw.oid=rw.ev_class
+		LEFT JOIN pg_namespace nsrw 
+			ON clrw.relnamespace=nsrw.oid
+		LEFT JOIN pg_language la 
+			ON dep.objid=la.oid
+		LEFT JOIN pg_namespace ns 
+			ON dep.objid=ns.oid
+		LEFT JOIN pg_attrdef ad 
+			ON ad.oid=dep.objid
+		INNER JOIN pg_rewrite rev
+			ON dep.objid=rev.oid
+		INNER JOIN pg_class clv
+			ON rev.ev_class=clv.oid
+		INNER JOIN pg_namespace nspv
+			ON nspv.oid=clv.relnamespace
+WHERE
+	dep.classid='pg_rewrite'::regclass
 ;

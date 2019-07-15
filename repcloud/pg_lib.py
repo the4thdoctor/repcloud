@@ -269,28 +269,53 @@ class pg_engine(object):
 			format('ALTER TABLE sch_repnew.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
 			format('ALTER TABLE sch_repnew.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
 			format('DROP TABLE sch_repdrop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
-			v_schema_name,
-			v_old_table_name,
-			v_new_table_name
+			coalesce(vie.i_id_table=tab.i_id_table,false) b_views,
+			CASE	
+				WHEN vie.i_id_table IS NOT NULL
+				THEN
+					vie.t_change_schema
+			END AS t_change_view_schema,
+			CASE	
+				WHEN vie.i_id_table IS NOT NULL
+				THEN
+					vie.t_create_view
+			END AS t_create_view,
+			vie.v_view_name,
+			tab.v_schema_name,
+			tab.v_old_table_name,
+			tab.v_new_table_name
+
+			
 		FROM 
-			sch_repcloud.t_table_repack
+			sch_repcloud.t_table_repack tab 
+			LEFT OUTER JOIN sch_repcloud.t_view_def vie
+				ON vie.i_id_table=tab.i_id_table
 		WHERE	
-					v_schema_name=%s
-				AND v_old_table_name=%s
+					tab.v_schema_name=%s
+				AND tab.v_old_table_name=%s
 			;
 		"""
 		db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
-		tab_swap= db_handler["cursor"].fetchall()
-		for tswap in tab_swap:
-			self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
-			self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
-			self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
-			self.logger.log_message("drop old table: %s" %tswap[3], 'debug')
-			db_handler["cursor"].execute(tswap[0])		
-			db_handler["cursor"].execute(tswap[1])		
-			db_handler["cursor"].execute(tswap[2])		
-			db_handler["cursor"].execute(tswap[3])		
-			
+		table_swap = db_handler["cursor"].fetchall()
+		tswap = table_swap[0]
+		self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
+		db_handler["cursor"].execute(tswap[0])		
+		self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
+		db_handler["cursor"].execute(tswap[1])	
+		self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
+		db_handler["cursor"].execute(tswap[2])	
+		if  tswap[4]:
+			self.logger.log_message("table has views: %s" %tswap[4], 'debug')
+			for vswap in table_swap:
+				self.logger.log_message("change schema old view", 'debug')
+				db_handler["cursor"].execute(vswap[5])		
+				self.logger.log_message("create view on new table", 'debug')
+				db_handler["cursor"].execute(vswap[6])		
+		
+		self.logger.log_message("drop old table: %s" %tswap[3], 'debug')
+		db_handler["cursor"].execute(tswap[3])		
+		
+		
 	def __repack_tables(self, con):
 		"""
 			The method executes the repack operation for each table in self.tab_list
