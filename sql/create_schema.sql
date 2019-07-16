@@ -22,8 +22,7 @@ CREATE TABLE t_table_repack
 	v_old_table_name character varying(100) NOT NULL,
 	v_new_table_name  character varying(100) NOT NULL,
 	v_schema_name character varying(100) NOT NULL,
-	t_create_identiy text,
-	t_create_idx text[],
+	t_tab_pk text[],
 	v_repack_step character varying(100),
 	v_status  character varying(100) ,
 	i_size_start bigint,
@@ -134,9 +133,66 @@ BEGIN
 		ON CONFLICT (v_schema_name,v_old_table_name)
 			DO UPDATE 
 				SET 
-					v_new_table_name=v_new_table
+					v_new_table_name=v_new_table,
+					oid_old_table=v_oid_old_table,
+					oid_new_table=v_oid_new_table
 		RETURNING i_id_table INTO v_i_id_table
 	;	
+
+	UPDATE sch_repcloud.t_table_repack
+	SET t_tab_pk=keydat.t_pk_att
+	FROM 
+		(
+			SELECT 
+				array_agg(attname) AS t_pk_att,
+				relname AS t_table_name,
+				conrelid AS oid_conrelid
+			FROM
+			(
+				SELECT 
+					attname,
+					relname,
+					conkey_order,
+					conrelid
+				FROM
+				(
+					SELECT 
+						unnest(conkey) AS conkey,
+						generate_subscripts(conkey,1) AS conkey_order,
+						conname,
+						contype,
+						conrelid,
+						tab.relname,
+						nsp.nspname,
+						typ.typname::text
+					FROM 
+						pg_catalog.pg_constraint con 
+						INNER JOIN pg_catalog.pg_namespace nsp
+							ON nsp.oid=con.connamespace
+						INNER JOIN pg_class tab
+							ON tab.oid=con.conrelid
+						INNER JOIN pg_type typ
+							ON typ.typrelid=tab.oid
+						
+					WHERE
+						con.contype='p'
+				
+				) keydat
+				INNER JOIN pg_catalog.pg_attribute att 
+					ON 
+						att.attrelid=keydat.conrelid
+					AND att.attnum=conkey
+					WHERE
+							nspname=p_t_schema
+						AND relname=p_t_table
+				ORDER BY conkey_order
+			) keyagg
+			GROUP BY 
+				relname,
+				conrelid
+		) keydat
+	WHERE oid_old_table=keydat.oid_conrelid
+		;
 
 	INSERT INTO sch_repcloud.t_view_def
 		(
@@ -194,6 +250,89 @@ BEGIN
 		;
 
 	
+END
+$BODY$
+LANGUAGE plpgsql 
+;
+
+CREATE OR REPLACE FUNCTION fn_create_log_table(text,text) 
+RETURNS VOID as 
+$BODY$
+DECLARE
+	p_t_schema			ALIAS FOR $1;
+	p_t_table			ALIAS FOR $2;
+	t_table_type		text;
+	t_sql_create 		text;
+	t_sql_alter 		text;
+	v_oid_old_table		oid;
+BEGIN
+	v_oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
+	t_table_type:=format('%I.%I',p_t_schema,p_t_table);
+	
+	t_sql_create:=format('
+		CREATE TABLE IF NOT EXISTS sch_repnew.t_log_%s
+		(
+			i_action_id bigserial ,
+			i_xid_action bigint NOT NULL,
+			v_action character varying(20) NOT NULL,
+			r_new_data %s ,
+			r_old_data %s,
+			ts_action timestamp with time zone NOT NULL DEFAULT now()
+		
+		);
+		ALTER TABLE sch_repnew.t_log_%s ADD CONSTRAINT pk_t_log_%s PRIMARY KEY (i_action_id);
+		CREATE INDEX  idx_xid_action_%s ON sch_repnew.t_log_%s  USING btree(i_xid_action);				
+		',
+			v_oid_old_table,
+			t_table_type,
+			t_table_type,
+			v_oid_old_table,
+			v_oid_old_table,
+			v_oid_old_table,
+			v_oid_old_table
+
+		);
+	EXECUTE t_sql_create ;
+
+	
+END
+$BODY$
+LANGUAGE plpgsql 
+;
+
+
+CREATE OR REPLACE FUNCTION fn_log_data_change() 
+RETURNS TRIGGER as 
+$BODY$
+DECLARE
+	v_t_sql_insert	text;
+	v_i_action_xid	bigint;
+BEGIN
+	v_i_action_xid:=(txid_current()::bigint);
+	v_t_sql_insert:=format(
+	'INSERT INTO sch_repnew.t_log_%s
+	(
+		i_xid_action,
+		v_action,
+		r_new_data,
+		r_old_data
+	)
+	VALUES
+	(
+		%L,
+		%L,
+		%L,
+		%L
+	)
+	',
+	TG_RELID,
+	v_i_action_xid,
+	TG_OP,
+	NEW,
+	OLD
+	);
+	EXECUTE v_t_sql_insert;
+	RETURN NULL;
 END
 $BODY$
 LANGUAGE plpgsql 
