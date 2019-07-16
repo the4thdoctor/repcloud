@@ -300,13 +300,50 @@ $BODY$
 LANGUAGE plpgsql 
 ;
 
-
-CREATE OR REPLACE FUNCTION fn_log_data_change() 
+CREATE OR REPLACE FUNCTION fn_log_insert() 
 RETURNS TRIGGER as 
 $BODY$
 DECLARE
 	v_t_sql_insert	text;
 	v_i_action_xid	bigint;
+	v_old_row		record;
+	v_new_row		record;
+BEGIN
+	v_i_action_xid:=(txid_current()::bigint);
+	v_t_sql_insert:=format(
+		'INSERT INTO sch_repnew.t_log_%s
+		(
+			i_xid_action,
+			v_action,
+			r_new_data
+		)
+		VALUES
+		(
+			%L,
+			%L,
+			%L
+		)
+		',
+		TG_RELID,
+		v_i_action_xid,
+		TG_OP,
+		NEW
+		);
+	EXECUTE v_t_sql_insert;
+	RETURN NULL;
+END
+$BODY$
+LANGUAGE plpgsql 
+;
+
+CREATE OR REPLACE FUNCTION fn_log_update() 
+RETURNS TRIGGER as 
+$BODY$
+DECLARE
+	v_t_sql_insert	text;
+	v_i_action_xid	bigint;
+	v_old_row		record;
+	v_new_row		record;
 BEGIN
 	v_i_action_xid:=(txid_current()::bigint);
 	v_t_sql_insert:=format(
@@ -337,6 +374,43 @@ END
 $BODY$
 LANGUAGE plpgsql 
 ;
+
+CREATE OR REPLACE FUNCTION fn_log_delete() 
+RETURNS TRIGGER as 
+$BODY$
+DECLARE
+	v_t_sql_insert	text;
+	v_i_action_xid	bigint;
+	v_old_row		record;
+	v_new_row		record;
+BEGIN
+	v_i_action_xid:=(txid_current()::bigint);
+		v_t_sql_insert:=format(
+		'INSERT INTO sch_repnew.t_log_%s
+		(
+			i_xid_action,
+			v_action,
+			r_old_data
+		)
+		VALUES
+		(
+			%L,
+			%L,
+			%L
+		)
+		',
+		TG_RELID,
+		v_i_action_xid,
+		TG_OP,
+		OLD
+		);
+	EXECUTE v_t_sql_insert;
+	RETURN NULL;
+END
+$BODY$
+LANGUAGE plpgsql 
+;
+
 
 --VIEWS
 

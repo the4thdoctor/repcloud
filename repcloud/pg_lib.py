@@ -155,15 +155,7 @@ class pg_engine(object):
 		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
 		sql_create="""SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
 		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
-		sql_create_log_trigger = """
-			CREATE TRIGGER z_repcloud_logger
-			AFTER INSERT OR UPDATE OR DELETE ON %s.%s
-			FOR EACH ROW
-			EXECUTE PROCEDURE fn_log_data_change()
-			;
-		"""  % (table[1], table[2], )
-		db_handler["cursor"].execute(sql_create_log_trigger)
-	
+		
 	def __create_indices(self, db_handler, table):
 		"""
 		The method builds the new indices on the new table
@@ -191,8 +183,34 @@ class pg_engine(object):
 			The method copy the data from the origin's table to the new one
 		"""
 		self.logger.log_message('Creating the logger trigger on the table %s.%s' % (table[1], table[0],  ), 'info')
-		sql_create_trigger = """
-		"""
+		sql_create_insert_trigger = """
+			CREATE TRIGGER z_repcloud_insert
+			AFTER INSERT ON %s.%s
+			FOR EACH ROW
+			EXECUTE PROCEDURE sch_repcloud.fn_log_insert()
+			;
+		"""  % (table[1], table[2], )
+		
+		sql_create_update_trigger = """
+			CREATE TRIGGER z_repcloud_update
+			AFTER UPDATE ON %s.%s
+			FOR EACH ROW
+			EXECUTE PROCEDURE sch_repcloud.fn_log_update()
+			;
+		"""  % (table[1], table[2], )
+		
+		sql_create_delete_trigger = """
+			CREATE TRIGGER z_repcloud_delete
+			AFTER DELETE ON %s.%s
+			FOR EACH ROW
+			EXECUTE PROCEDURE sch_repcloud.fn_log_delete()
+			;
+		"""  % (table[1], table[2], )
+		
+		db_handler["cursor"].execute(sql_create_insert_trigger )
+		db_handler["cursor"].execute(sql_create_update_trigger )
+		db_handler["cursor"].execute(sql_create_delete_trigger )
+	
 		
 		sql_get_new_tab = """
 			SELECT 
