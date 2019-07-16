@@ -27,6 +27,7 @@ CREATE TABLE t_table_repack
 	v_status  character varying(100) ,
 	i_size_start bigint,
 	i_size_end bigint,
+	xid_copy_start bigint,
 	ts_repack_start	timestamp without time zone,
 	ts_repack_end	timestamp without time zone,
 	CONSTRAINT pk_t_table_repack PRIMARY KEY (i_id_table)
@@ -748,7 +749,7 @@ FROM
 ) t_tab_blt
 ;
 
-CREATE OR REPLACE VIEW sch_repcloud.v_create_idx_cons
+CREATE OR REPLACE VIEW v_create_idx_cons
 AS
 SELECT 
 	CASE
@@ -776,7 +777,8 @@ SELECT
 	v_old_table_name,
 	v_new_table_name,
 	v_schema_name,
-	t_index_name
+	t_index_name,
+	v_contype
 
 FROM
 (
@@ -798,7 +800,7 @@ FROM
 ) create_idx
 ;
 
-CREATE OR REPLACE VIEW sch_repcloud.v_tab_fkeys AS
+CREATE OR REPLACE VIEW v_tab_fkeys AS
 	SELECT DISTINCT
 		format('ALTER TABLE ONLY sch_repnew.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,
 		format('ALTER TABLE ONLY sch_repnew.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname) AS t_con_validate,
@@ -822,7 +824,7 @@ CREATE OR REPLACE VIEW sch_repcloud.v_tab_fkeys AS
 
 
 
-CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
+CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 	SELECT 
 		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
 		format('ALTER TABLE ONLY %I.%I RENAME CONSTRAINT %I TO %I;',v_schema_name,v_referencing_table ,v_con_name,v_con_name::character varying(40)||'_old' ) AS t_con_rename,
@@ -867,7 +869,7 @@ CREATE OR REPLACE VIEW sch_repcloud.v_tab_ref_fkeys AS
 Views to get dependencies adapted from pgadmin3's query to get referenced objects
 */
 
-CREATE OR REPLACE VIEW sch_repcloud.v_serials 
+CREATE OR REPLACE VIEW v_serials 
 AS 
 SELECT 
 	* 

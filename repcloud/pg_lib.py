@@ -155,6 +155,29 @@ class pg_engine(object):
 		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
 		sql_create="""SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
 		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
+
+	def __create_pkey(self, db_handler, table):
+		"""
+		The method builds the primary key on the given table
+		"""
+		sql_get_pk = """
+			SELECT 
+				t_create,
+				v_new_table_name,
+				t_index_name
+			FROM 
+				sch_repcloud.v_create_idx_cons
+			WHERE 
+					v_schema_name=%s
+				AND v_old_table_name=%s
+				AND v_contype='p'
+			;
+		"""
+		db_handler["cursor"].execute(sql_get_pk,  (table[1], table[2], ))
+		pkey = db_handler["cursor"].fetchone()
+		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[1],pkey[2],  ), 'info')
+		db_handler["cursor"].execute(pkey[0])
+
 		
 	def __create_indices(self, db_handler, table):
 		"""
@@ -168,8 +191,9 @@ class pg_engine(object):
 			FROM 
 				sch_repcloud.v_create_idx_cons
 			WHERE 
-				v_schema_name=%s
+					v_schema_name=%s
 				AND v_old_table_name=%s
+				AND v_contype<>'p'
 			;
 		"""
 		db_handler["cursor"].execute(sql_get_idx,  (table[1], table[2], ))
@@ -213,24 +237,34 @@ class pg_engine(object):
 	
 		
 		sql_get_new_tab = """
-			SELECT 
-				v_new_table_name 
-			FROM 
-				sch_repcloud.t_table_repack 
+			UPDATE sch_repcloud.t_table_repack 
+			SET xid_copy_start=txid_current()
 			WHERE 
 					
 					v_schema_name=%s
 				AND v_old_table_name=%s 
+			RETURNING v_new_table_name 
 			;
 		"""
+		db_handler["connection"].set_session(autocommit=False)
 		db_handler["cursor"].execute(sql_get_new_tab,  (table[1], table[2], ))
 		new_table = db_handler["cursor"].fetchone()
 		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
+		
 		sql_copy = """
-			INSERT INTO sch_repnew.\"%s\" SELECT * FROM \"%s\".\"%s\";
+			INSERT INTO sch_repnew.\"%s\" SELECT * FROM \"%s\".\"%s\" ;
+		""" % (new_table[0], table[1],table[2], )
+		
+		sql_analyze = """
 			ANALYZE sch_repnew.\"%s\";
-		""" % (new_table[0], table[1],table[2],new_table[0],  )
+		""" % (new_table[0],  )
+		
 		db_handler["cursor"].execute(sql_copy)
+		db_handler["connection"].commit()
+		db_handler["connection"].set_session(autocommit=True)
+		db_handler["cursor"].execute(sql_analyze)
+		
+		
 	
 	def __create_tab_fkeys(self, db_handler, table):
 		"""
@@ -358,9 +392,10 @@ class pg_engine(object):
 			self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
 			self.__create_new_table(db_handler, table)
 			self.__copy_table_data(db_handler, table)
-			self.__create_indices(db_handler, table)
-			self.__create_tab_fkeys(db_handler, table)
-			self.__create_ref_fkeys(db_handler, table)
+			self.__create_pkey(db_handler, table)
+			#self.__create_indices(db_handler, table)
+			#self.__create_tab_fkeys(db_handler, table)
+			#self.__create_ref_fkeys(db_handler, table)
 			#self.__swap_tables(db_handler, table)
 			
 		sql_update_old_size="""
