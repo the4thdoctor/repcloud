@@ -152,6 +152,17 @@ class pg_engine(object):
 		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
 		sql_create="""SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
 		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
+		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
+		sql_create="""SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
+		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
+		sql_create_log_trigger = """
+			CREATE TRIGGER z_repcloud_logger
+			AFTER INSERT OR UPDATE OR DELETE ON %s.%s
+			FOR EACH ROW
+			EXECUTE PROCEDURE fn_log_data_change()
+			;
+		"""  % (table[1], table[2], )
+		db_handler["cursor"].execute(sql_create_log_trigger)
 	
 	def __create_indices(self, db_handler, table):
 		"""
@@ -179,6 +190,10 @@ class pg_engine(object):
 		"""
 			The method copy the data from the origin's table to the new one
 		"""
+		self.logger.log_message('Creating the logger trigger on the table %s.%s' % (table[1], table[0],  ), 'info')
+		sql_create_trigger = """
+		"""
+		
 		sql_get_new_tab = """
 			SELECT 
 				v_new_table_name 
@@ -312,8 +327,8 @@ class pg_engine(object):
 				self.logger.log_message("create view on new table", 'debug')
 				db_handler["cursor"].execute(vswap[6])		
 		
-		self.logger.log_message("drop old table: %s" %tswap[3], 'debug')
-		db_handler["cursor"].execute(tswap[3])		
+		#self.logger.log_message("drop old table: %s" %tswap[3], 'debug')
+		#db_handler["cursor"].execute(tswap[3])		
 		
 		
 	def __repack_tables(self, con):
@@ -328,7 +343,7 @@ class pg_engine(object):
 			self.__create_indices(db_handler, table)
 			self.__create_tab_fkeys(db_handler, table)
 			self.__create_ref_fkeys(db_handler, table)
-			self.__swap_tables(db_handler, table)
+			#self.__swap_tables(db_handler, table)
 			
 		sql_update_old_size="""
 			UPDATE sch_repcloud.t_table_repack
