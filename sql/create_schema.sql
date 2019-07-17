@@ -87,8 +87,27 @@ DECLARE
 	p_t_table			ALIAS FOR $2;
 	p_i_max_replay		ALIAS FOR $3;
 	v_rec_replay 		record; 
-	v_i_action_delete	bigint[];
+	v_i_action_replay	bigint[];
 BEGIN
+	
+	v_i_action_replay:=(
+		SELECT 
+			array_agg(i_action_id)
+		FROM
+		(
+			SELECT 
+				i_action_id
+			FROM 
+				sch_repcloud.t_log_replay tlog
+			INNER JOIN sch_repcloud.t_table_repack trep
+				ON trep.oid_old_table=tlog.oid_old_tab_oid
+			WHERE 
+					trep.v_schema_name=p_t_schema
+				AND trep.v_old_table_name=p_t_table
+			LIMIT p_i_max_replay
+		) aid
+	)
+	;
 	FOR v_rec_replay IN SELECT 
 							i_action_id,
 							CASE
@@ -183,8 +202,7 @@ BEGIN
 										INNER JOIN sch_repcloud.t_table_repack trep
 										ON trep.oid_old_table=tlog.oid_old_tab_oid
 									WHERE 
-											trep.v_schema_name=p_t_schema
-										AND trep.v_old_table_name=p_t_table
+											tlog.i_action_id=ANY(v_i_action_replay)
 									ORDER BY 
 										i_action_id,
 										i_xid_action
@@ -208,10 +226,9 @@ BEGIN
 	LOOP
 		RAISE DEBUG '%',v_rec_replay.t_sql ;
 		EXECUTE v_rec_replay.t_sql;
-		v_i_action_delete:=array_append(v_i_action_delete,v_rec_replay.i_action_id);
 	END LOOP;
-	DELETE FROM sch_repcloud.t_log_replay WHERE i_action_id=any(v_i_action_delete);
-	RAISE DEBUG '%',v_i_action_delete;
+	DELETE FROM sch_repcloud.t_log_replay WHERE i_action_id=ANY(v_i_action_replay);
+	RAISE DEBUG '%',v_i_action_replay;
 	
 END;
 $BODY$
