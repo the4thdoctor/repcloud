@@ -62,7 +62,22 @@ CREATE TABLE sch_repcloud.t_view_def (
 );
 
 
+CREATE TABLE IF NOT EXISTS sch_repcloud.t_log_replay
+(
+	i_action_id bigserial ,
+	i_xid_action bigint NOT NULL,
+	oid_old_tab_oid bigint NOT NULL,
+	v_action character varying(20) NOT NULL,
+	jb_new_data jsonb ,
+	jb_old_data jsonb ,
+	ts_action timestamp with time zone NOT NULL DEFAULT now()
 
+);
+ALTER TABLE sch_repcloud.t_log_replay ADD CONSTRAINT pk_t_log_replay PRIMARY KEY (i_action_id);
+CREATE INDEX  idx_xid_action_t_log_replay ON sch_repcloud.t_log_replay  USING btree(i_xid_action);	
+CREATE INDEX  idx_oid_old_tab_oid_t_log_replay ON sch_repcloud.t_log_replay  USING btree(oid_old_tab_oid);
+
+-- functions
 CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
 RETURNS VOID as 
 $BODY$
@@ -256,51 +271,6 @@ $BODY$
 LANGUAGE plpgsql 
 ;
 
-CREATE OR REPLACE FUNCTION fn_create_log_table(text,text) 
-RETURNS VOID as 
-$BODY$
-DECLARE
-	p_t_schema			ALIAS FOR $1;
-	p_t_table			ALIAS FOR $2;
-	t_table_type		text;
-	t_sql_create 		text;
-	t_sql_alter 		text;
-	v_oid_old_table		oid;
-BEGIN
-	v_oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
-	t_table_type:=format('%I.%I',p_t_schema,p_t_table);
-	
-	t_sql_create:=format('
-		CREATE TABLE IF NOT EXISTS sch_repnew.t_log_%s
-		(
-			i_action_id bigserial ,
-			i_xid_action bigint NOT NULL,
-			v_action character varying(20) NOT NULL,
-			r_new_data %s ,
-			r_old_data %s,
-			ts_action timestamp with time zone NOT NULL DEFAULT now()
-		
-		);
-		ALTER TABLE sch_repnew.t_log_%s ADD CONSTRAINT pk_t_log_%s PRIMARY KEY (i_action_id);
-		CREATE INDEX  idx_xid_action_%s ON sch_repnew.t_log_%s  USING btree(i_xid_action);				
-		',
-			v_oid_old_table,
-			t_table_type,
-			t_table_type,
-			v_oid_old_table,
-			v_oid_old_table,
-			v_oid_old_table,
-			v_oid_old_table
-
-		);
-	EXECUTE t_sql_create ;
-
-	
-END
-$BODY$
-LANGUAGE plpgsql 
-;
-
 CREATE OR REPLACE FUNCTION fn_log_insert() 
 RETURNS TRIGGER as 
 $BODY$
@@ -312,23 +282,26 @@ DECLARE
 BEGIN
 	v_i_action_xid:=(txid_current()::bigint);
 	v_t_sql_insert:=format(
-		'INSERT INTO sch_repnew.t_log_%s
+		'INSERT INTO sch_repcloud.t_log_replay
 		(
 			i_xid_action,
 			v_action,
-			r_new_data
+			jb_new_data,
+			oid_old_tab_oid
+			
 		)
 		VALUES
 		(
 			%L,
 			%L,
+			%L,
 			%L
 		)
 		',
-		TG_RELID,
 		v_i_action_xid,
 		TG_OP,
-		NEW
+		row_to_json(NEW),
+		TG_RELID
 		);
 	EXECUTE v_t_sql_insert;
 	RETURN NULL;
@@ -348,26 +321,28 @@ DECLARE
 BEGIN
 	v_i_action_xid:=(txid_current()::bigint);
 	v_t_sql_insert:=format(
-	'INSERT INTO sch_repnew.t_log_%s
+	'INSERT INTO sch_repcloud.t_log_replay
 	(
 		i_xid_action,
 		v_action,
-		r_new_data,
-		r_old_data
+		jb_new_data,
+		jb_old_data,
+		oid_old_tab_oid
 	)
 	VALUES
 	(
 		%L,
 		%L,
 		%L,
+		%L,
 		%L
 	)
 	',
-	TG_RELID,
 	v_i_action_xid,
 	TG_OP,
-	NEW,
-	OLD
+	row_to_json(NEW),
+	row_to_json(OLD),
+	TG_RELID
 	);
 	EXECUTE v_t_sql_insert;
 	RETURN NULL;
@@ -387,23 +362,25 @@ DECLARE
 BEGIN
 	v_i_action_xid:=(txid_current()::bigint);
 		v_t_sql_insert:=format(
-		'INSERT INTO sch_repnew.t_log_%s
+		'INSERT INTO sch_repcloud.t_log_replay
 		(
 			i_xid_action,
 			v_action,
-			r_old_data
+			jb_old_data,
+			oid_old_tab_oid
 		)
 		VALUES
 		(
 			%L,
 			%L,
+			%L,
 			%L
 		)
 		',
-		TG_RELID,
 		v_i_action_xid,
 		TG_OP,
-		OLD
+		row_to_json(OLD),
+		TG_RELID
 		);
 	EXECUTE v_t_sql_insert;
 	RETURN NULL;

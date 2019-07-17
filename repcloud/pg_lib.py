@@ -153,9 +153,7 @@ class pg_engine(object):
 		sql_create="""SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
 		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
 		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
-		sql_create="""SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
-		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
-
+		
 	def __create_pkey(self, db_handler, table):
 		"""
 		The method builds the primary key on the given table
