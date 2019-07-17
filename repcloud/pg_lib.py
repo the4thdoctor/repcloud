@@ -229,10 +229,19 @@ class pg_engine(object):
 			;
 		"""  % (table[1], table[2], )
 		
+		sql_create_truncate_trigger = """
+			CREATE TRIGGER z_repcloud_truncate
+			AFTER TRUNCATE ON %s.%s
+			FOR EACH STATEMENT
+			EXECUTE PROCEDURE sch_repcloud.fn_log_truncate()
+			;
+		"""  % (table[1], table[2], )
+
+
 		db_handler["cursor"].execute(sql_create_insert_trigger )
 		db_handler["cursor"].execute(sql_create_update_trigger )
 		db_handler["cursor"].execute(sql_create_delete_trigger )
-	
+		db_handler["cursor"].execute(sql_create_truncate_trigger )
 		
 		sql_get_new_tab = """
 			UPDATE sch_repcloud.t_table_repack 
