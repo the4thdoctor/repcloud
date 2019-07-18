@@ -20,3 +20,6 @@ sslmode = "require"
 #the lists are cumulative
 schemas = ['foo',]
 tables = ['foo.bar']
+#sets the maximum amount of rows to replay during the sync run
+max_replay_rows = "10000"
+lock_timeout = "3s"

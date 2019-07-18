@@ -79,7 +79,7 @@ CREATE INDEX  idx_oid_old_tab_oid_t_log_replay ON sch_repcloud.t_log_replay  USI
 
 -- functions
 
-CREATE OR REPLACE FUNCTION sch_repcloud.replay_change(text,text,integer) 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_replay_change(text,text,integer) 
 RETURNS void as 
 $BODY$
 DECLARE
@@ -104,6 +104,7 @@ BEGIN
 			WHERE 
 					trep.v_schema_name=p_t_schema
 				AND trep.v_old_table_name=p_t_table
+				AND tlog.i_xid_action>trep.xid_copy_start
 			LIMIT p_i_max_replay
 		) aid
 	)

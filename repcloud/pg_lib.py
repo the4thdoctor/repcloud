@@ -176,6 +176,67 @@ class pg_engine(object):
 		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[1],pkey[2],  ), 'info')
 		db_handler["cursor"].execute(pkey[0])
 
+	def __sync_table(self, db_handler, table, con):
+		"""
+		The method replays the table's data and put in sync the origin's table with the new one
+		"""
+		continue_replay = True
+		max_replay_rows = self.connections[con]["max_replay_rows"]
+		lock_timeout = self.connections[con]["lock_timeout"]
+		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
+		sql_reset_lock_timeout = """SET lock_timeout = default;"""
+		sql_lock_table = """LOCK TABLE "%s"."%s" in ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
+		sql_replay_data = """
+			SELECT sch_repcloud.fn_replay_change(%s,%s,%s);
+		"""
+		sql_check_for_last_replay = """
+			SELECT 
+				count(*)>%s
+			FROM 
+				sch_repcloud.t_table_repack trep
+				INNER JOIN sch_repcloud.t_log_replay tlog 
+					ON trep.oid_old_table=tlog.oid_old_tab_oid
+			WHERE
+					trep.xid_copy_start<tlog.i_xid_action
+				AND	trep.v_old_table_name=%s
+				AND	trep.v_schema_name=%s
+			;
+		"""
+		
+		sql_swap_triggers = """
+			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_insert;
+			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_update;
+			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_delete;
+			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_truncate;
+			ALTER TABLE %s.%s ENABLE TRIGGER z_repcloud_sync;
+		"""  % (table[1], table[2],table[1], table[2],table[1], table[2],table[1], table[2],table[1], table[2], )
+
+		
+		while continue_replay :
+			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
+			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
+			db_handler["cursor"].execute(sql_check_for_last_replay,  (max_replay_rows , table[1], table[2],))
+			last_replay = db_handler["cursor"].fetchone()
+			continue_replay = last_replay[0]
+			if not continue_replay:
+				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
+				db_handler["connection"].set_session(autocommit=False)
+				self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
+				try:
+					db_handler["cursor"].execute(sql_lock_table)
+					last_replay=int(max_replay_rows) *10
+					self.logger.log_message('Replaying the last bunch of data data on table %s.%s  max replay rows per run: %s' % (table[1], table[2],last_replay  ), 'info')
+					db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],last_replay,  ))
+					self.logger.log_message('Enabling the sync trigger on table %s.%s  ' % (table[1], table[2],  ), 'info')
+					db_handler["cursor"].execute(sql_swap_triggers)
+					db_handler["connection"].commit()
+				except:
+					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+					db_handler["connection"].rollback()
+					continue_replay  = True
+				db_handler["connection"].set_session(autocommit=True)
+				db_handler["cursor"].execute(sql_reset_lock_timeout )
+				
 		
 	def __create_indices(self, db_handler, table):
 		"""
@@ -237,11 +298,24 @@ class pg_engine(object):
 			;
 		"""  % (table[1], table[2], )
 
+		sql_create_sync_trigger = """
+			CREATE TRIGGER z_repcloud_sync
+			AFTER 
+			INSERT OR 
+			UPDATE OR 
+			DELETE ON %s.%s
+			FOR EACH ROW
+			EXECUTE PROCEDURE sch_repcloud.fn_dml_new_tab()
+			;
+			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_sync;
+		"""  % (table[1], table[2],table[1], table[2], )
 
+		
 		db_handler["cursor"].execute(sql_create_insert_trigger )
 		db_handler["cursor"].execute(sql_create_update_trigger )
 		db_handler["cursor"].execute(sql_create_delete_trigger )
 		db_handler["cursor"].execute(sql_create_truncate_trigger )
+		db_handler["cursor"].execute(sql_create_sync_trigger )
 		
 		sql_get_new_tab = """
 			UPDATE sch_repcloud.t_table_repack 
@@ -401,6 +475,7 @@ class pg_engine(object):
 			self.__copy_table_data(db_handler, table)
 			self.__create_pkey(db_handler, table)
 			self.__create_indices(db_handler, table)
+			self.__sync_table(db_handler, table, con)
 			#self.__create_tab_fkeys(db_handler, table)
 			#self.__create_ref_fkeys(db_handler, table)
 			#self.__swap_tables(db_handler, table)
