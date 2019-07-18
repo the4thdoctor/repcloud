@@ -400,7 +400,7 @@ class pg_engine(object):
 			self.__create_new_table(db_handler, table)
 			self.__copy_table_data(db_handler, table)
 			self.__create_pkey(db_handler, table)
-			#self.__create_indices(db_handler, table)
+			self.__create_indices(db_handler, table)
 			#self.__create_tab_fkeys(db_handler, table)
 			#self.__create_ref_fkeys(db_handler, table)
 			#self.__swap_tables(db_handler, table)

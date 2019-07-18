@@ -235,7 +235,7 @@ $BODY$
 LANGUAGE plpgsql 
 ;
 
-CREATE OR REPLACE FUNCTION fn_create_repack_table(text,text) 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_repack_table(text,text) 
 RETURNS VOID as 
 $BODY$
 DECLARE
@@ -269,23 +269,25 @@ BEGIN
 		WHERE 
 			refobjid=v_oid_old_table
 	 );
-	t_sql_create:=format('
-		CREATE SEQUENCE sch_repnew.%s;',
+	IF v_t_seq_name IS NOT NULL
+	THEN
+		t_sql_create:=format('
+			CREATE SEQUENCE sch_repnew.%s;',
+			v_t_seq_name[1]
+		);
+		t_sql_alter=format('ALTER TABLE sch_repnew.%I ALTER COLUMN %I SET DEFAULT(nextval(''sch_repnew.%I''::regclass));',
+		v_new_table,
+		v_t_seq_name[2],
 		v_t_seq_name[1]
-	);
-	t_sql_alter=format('ALTER TABLE sch_repnew.%I ALTER COLUMN %I SET DEFAULT(nextval(''sch_repnew.%I''::regclass));',
-	v_new_table,
-	v_t_seq_name[2],
-	v_t_seq_name[1]
-	);
-	EXECUTE t_sql_create;
-	EXECUTE t_sql_alter ;
-	
-	t_sql_alter=format('ALTER SEQUENCE sch_repnew.%I OWNED BY sch_repnew.%I.%I;',
-	v_t_seq_name[1],
-	v_new_table,
-	v_t_seq_name[2]);
-	EXECUTE t_sql_alter ;
+		);
+		EXECUTE t_sql_create;
+		EXECUTE t_sql_alter ;
+		t_sql_alter=format('ALTER SEQUENCE sch_repnew.%I OWNED BY sch_repnew.%I.%I;',
+		v_t_seq_name[1],
+		v_new_table,
+		v_t_seq_name[2]);
+		EXECUTE t_sql_alter ;
+	END IF;
 	v_oid_new_table:=format('sch_repnew.%I',v_new_table)::regclass::oid;
 	INSERT INTO sch_repcloud.t_table_repack 
 		(
@@ -580,6 +582,104 @@ END
 $BODY$
 LANGUAGE plpgsql 
 ;
+
+
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_dml_new_tab() 
+RETURNS trigger as 
+$BODY$
+DECLARE
+	v_jb_row_image	jsonb;
+	v_jb_row_ident	jsonb;
+	v_t_tab_pk		text;
+	v_t_tab_dml		text;
+	v_t_tab_name	text;
+BEGIN
+	v_t_tab_name=format('%s_%s',TG_TABLE_NAME,TG_RELID);
+	IF TG_OP = 'INSERT'
+	THEN
+		v_jb_row_image:=row_to_json(NEW);
+		v_jb_row_ident:=v_jb_row_image;
+		
+	
+	ELSEIF TG_OP = 'UPDATE'
+	THEN
+		v_jb_row_image:=row_to_json(NEW);
+		v_jb_row_ident:=row_to_json(OLD);
+	ELSEIF TG_OP = 'DELETE'
+	THEN
+		v_jb_row_image:=row_to_json(OLD);
+		v_jb_row_ident:=v_jb_row_image;
+	END IF;
+
+	v_t_tab_pk:=(
+		SELECT
+			string_agg(
+				format(
+					'%I=%L',
+					t_tab_pk,
+					v_jb_row_ident->>t_tab_pk
+							
+					)
+				,' AND '
+				)
+		FROM
+			(
+				SELECT
+					unnest(t_tab_pk) t_tab_pk
+				FROM 
+					sch_repcloud.t_table_repack 
+				WHERE
+					oid_old_table=TG_RELID
+			) pk		
+		);
+	
+		v_t_tab_dml:=(
+			SELECT 
+				CASE
+					WHEN TG_OP = 'INSERT'
+					THEN
+						format(
+							'INSERT INTO sch_repnew.%s (%s) VALUES (%s);',
+							v_t_tab_name,
+							string_agg(format('%I',jb_cols),','),
+							string_agg(format('%L',v_jb_row_image->>jb_cols),',')
+							)
+					WHEN TG_OP = 'UPDATE'
+					THEN
+						format(
+							'UPDATE sch_repnew.%s SET %s WHERE %s;',
+							v_t_tab_name,
+							string_agg(format('%I=%L',jb_cols,v_jb_row_image->>jb_cols),','),
+							v_t_tab_pk
+							)
+					WHEN TG_OP = 'DELETE'
+					THEN
+						format(
+							'DELETE FROM sch_repnew.%s WHERE %s;',
+							v_t_tab_name,
+							v_t_tab_pk
+							)
+						
+				END AS t_dec_data
+			FROM 
+			(
+				SELECT 
+					(jsonb_each_text(v_jb_row_image)).key as jb_cols
+			) col
+		);
+		
+		
+	
+	RAISE DEBUG '%', v_jb_row_image;
+	RAISE DEBUG '%', v_t_tab_pk;
+	RAISE DEBUG '%', v_t_tab_dml;
+	EXECUTE v_t_tab_dml;
+	RETURN NULL;
+END;
+$BODY$
+LANGUAGE plpgsql 
+;
+
 
 --VIEWS
 
