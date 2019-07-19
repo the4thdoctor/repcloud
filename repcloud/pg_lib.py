@@ -203,15 +203,17 @@ class pg_engine(object):
 			;
 		"""
 		
-		sql_swap_triggers = """
-			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_insert;
-			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_update;
-			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_delete;
-			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_truncate;
-			ALTER TABLE %s.%s ENABLE TRIGGER z_repcloud_sync;
-		"""  % (table[1], table[2],table[1], table[2],table[1], table[2],table[1], table[2],table[1], table[2], )
-
+		sql_update_sync_xid="""
+			UPDATE sch_repcloud.t_table_repack tlog 
+				SET
+					xid_sync_end=txid_current()
+			WHERE
+					v_schema_name=%s
+				AND	v_old_table_name=%s
+			;
+		"""
 		
+			
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
@@ -220,15 +222,16 @@ class pg_engine(object):
 			continue_replay = last_replay[0]
 			if not continue_replay:
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
-				db_handler["connection"].set_session(autocommit=False)
+				db_handler["connection"].set_session(autocommit=False, isolation_level='SERIALIZABLE')
 				self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
+				
 				try:
 					db_handler["cursor"].execute(sql_lock_table)
 					last_replay=int(max_replay_rows) *10
 					self.logger.log_message('Replaying the last bunch of data data on table %s.%s  max replay rows per run: %s' % (table[1], table[2],last_replay  ), 'info')
 					db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],last_replay,  ))
-					self.logger.log_message('Enabling the sync trigger on table %s.%s  ' % (table[1], table[2],  ), 'info')
-					db_handler["cursor"].execute(sql_swap_triggers)
+					
+					db_handler["cursor"].execute(sql_update_sync_xid,  (table[1], table[2],  ))
 					db_handler["connection"].commit()
 				except:
 					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
@@ -315,7 +318,7 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_create_update_trigger )
 		db_handler["cursor"].execute(sql_create_delete_trigger )
 		db_handler["cursor"].execute(sql_create_truncate_trigger )
-		db_handler["cursor"].execute(sql_create_sync_trigger )
+		#db_handler["cursor"].execute(sql_create_sync_trigger )
 		
 		sql_get_new_tab = """
 			UPDATE sch_repcloud.t_table_repack 
@@ -476,9 +479,9 @@ class pg_engine(object):
 			self.__create_pkey(db_handler, table)
 			self.__create_indices(db_handler, table)
 			self.__sync_table(db_handler, table, con)
-			#self.__create_tab_fkeys(db_handler, table)
-			#self.__create_ref_fkeys(db_handler, table)
-			#self.__swap_tables(db_handler, table)
+			self.__create_tab_fkeys(db_handler, table)
+			self.__create_ref_fkeys(db_handler, table)
+			self.__swap_tables(db_handler, table)
 			
 		sql_update_old_size="""
 			UPDATE sch_repcloud.t_table_repack

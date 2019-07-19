@@ -28,6 +28,7 @@ CREATE TABLE t_table_repack
 	i_size_start bigint,
 	i_size_end bigint,
 	xid_copy_start bigint,
+	xid_sync_end bigint,
 	ts_repack_start	timestamp without time zone,
 	ts_repack_end	timestamp without time zone,
 	CONSTRAINT pk_t_table_repack PRIMARY KEY (i_id_table)
@@ -70,7 +71,7 @@ CREATE TABLE IF NOT EXISTS sch_repcloud.t_log_replay
 	v_action character varying(20) NOT NULL,
 	jb_new_data jsonb ,
 	jb_old_data jsonb ,
-	ts_action timestamp with time zone NOT NULL DEFAULT now()
+	ts_action timestamp with time zone NOT NULL DEFAULT clock_timestamp()
 
 );
 ALTER TABLE sch_repcloud.t_log_replay ADD CONSTRAINT pk_t_log_replay PRIMARY KEY (i_action_id);
