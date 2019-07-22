@@ -1,8 +1,8 @@
 import psycopg2
 from psycopg2 import sql
-from psycopg2.extras import RealDictCursor
+#from psycopg2.extras import RealDictCursor
 from distutils.sysconfig import get_python_lib
-
+import sys
 class pg_engine(object):
 	def __init__(self):
 		"""
@@ -176,33 +176,20 @@ class pg_engine(object):
 		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[1],pkey[2],  ), 'info')
 		db_handler["cursor"].execute(pkey[0])
 
-	def __sync_table(self, db_handler, table, con):
+	def __swap_tables(self, db_handler, table, con):
 		"""
-		The method replays the table's data and put in sync the origin's table with the new one
+		The method replays the table's data then tries to swap the origin table with the new one
 		"""
 		continue_replay = True
 		max_replay_rows = self.connections[con]["max_replay_rows"]
+		last_replay_rows = int(max_replay_rows)*10
 		lock_timeout = self.connections[con]["lock_timeout"]
 		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
-		sql_lock_table = """LOCK TABLE "%s"."%s" in ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
+		sql_lock_table = """LOCK TABLE "%s"."%s" in EXCLUSIVE MODE; """ % (table[1], table[2],)
 		sql_replay_data = """
 			SELECT sch_repcloud.fn_replay_change(%s,%s,%s);
 		"""
-		sql_check_for_last_replay = """
-			SELECT 
-				count(*)>%s
-			FROM 
-				sch_repcloud.t_table_repack trep
-				INNER JOIN sch_repcloud.t_log_replay tlog 
-					ON trep.oid_old_table=tlog.oid_old_tab_oid
-			WHERE
-					trep.xid_copy_start<tlog.i_xid_action
-				AND	trep.v_old_table_name=%s
-				AND	trep.v_schema_name=%s
-			;
-		"""
-		
 		sql_update_sync_xid="""
 			UPDATE sch_repcloud.t_table_repack tlog 
 				SET
@@ -213,32 +200,121 @@ class pg_engine(object):
 			;
 		"""
 		
+		sql_seq = """
+			SELECT 
+				format(
+					'SELECT setval(''%%I.%%I''::regclass,(SELECT max(%%I) FROM %%s));',
+					nspname,
+					refname,
+					secatt,
+					seqtab
+				)
+			FROM
+			(
+				SELECT 
+					secatt,
+					refname,
+					nspname,
+					ser.refobjid::regclass::TEXT AS seqtab
+				FROM 
+					sch_repcloud.v_serials ser
+					INNER JOIN sch_repcloud.t_table_repack nt
+					ON ser.refobjid=nt.oid_new_table
+				WHERE 
+						
+						nt.v_schema_name=%s
+					AND nt.v_old_table_name=%s
+			) setv 	
+			;
+
+		"""
+		sql_swap = """
+			SELECT 
+				format('ALTER TABLE %%I.%%I SET SCHEMA sch_repdrop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
+				format('ALTER TABLE sch_repnew.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
+				format('ALTER TABLE sch_repnew.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+				format('DROP TABLE sch_repdrop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+				coalesce(vie.i_id_table=tab.i_id_table,false) b_views,
+				CASE	
+					WHEN vie.i_id_table IS NOT NULL
+					THEN
+						vie.t_change_schema
+				END AS t_change_view_schema,
+				CASE	
+					WHEN vie.i_id_table IS NOT NULL
+					THEN
+						vie.t_create_view
+				END AS t_create_view,
+				vie.v_view_name,
+				tab.v_schema_name,
+				tab.v_old_table_name,
+				tab.v_new_table_name
+
+				
+			FROM 
+				sch_repcloud.t_table_repack tab 
+				LEFT OUTER JOIN sch_repcloud.t_view_def vie
+					ON vie.i_id_table=tab.i_id_table
+			WHERE	
+						tab.v_schema_name=%s
+					AND tab.v_old_table_name=%s
+				;
+		"""
 			
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
-			db_handler["cursor"].execute(sql_check_for_last_replay,  (max_replay_rows , table[1], table[2],))
 			last_replay = db_handler["cursor"].fetchone()
-			continue_replay = last_replay[0]
-			if not continue_replay:
+			try_swap = int(last_replay[0])<int(max_replay_rows)
+			if try_swap:
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
-				db_handler["connection"].set_session(autocommit=False, isolation_level='SERIALIZABLE')
+				db_handler["connection"].set_session(autocommit=False)
 				self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
 				
 				try:
 					db_handler["cursor"].execute(sql_lock_table)
-					last_replay=int(max_replay_rows) *10
-					self.logger.log_message('Replaying the last bunch of data data on table %s.%s  max replay rows per run: %s' % (table[1], table[2],last_replay  ), 'info')
-					db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],last_replay,  ))
-					
+					continue_replay = False
+					run_last_replay = True
+					while run_last_replay:
+						self.logger.log_message('Replaying the last bunch of data data on table %s.%s  max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
+						db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
+						last_replay = db_handler["cursor"].fetchone()
+						run_last_replay = int(last_replay[0])>0
 					db_handler["cursor"].execute(sql_update_sync_xid,  (table[1], table[2],  ))
+					db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
+					reset_sequence = db_handler["cursor"].fetchone()
+					self.logger.log_message("resetting sequence on new table" , 'debug')
+					db_handler["cursor"].execute(reset_sequence[0])		
+					table_swap = db_handler["cursor"].fetchall()
+					db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
+					table_swap = db_handler["cursor"].fetchall()
+					tswap = table_swap[0]
+					self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
+					db_handler["cursor"].execute(tswap[0])		
+					self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
+					db_handler["cursor"].execute(tswap[1])	
+					self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
+					db_handler["cursor"].execute(tswap[2])	
+					if  tswap[4]:
+						self.logger.log_message("table has views: %s" %tswap[4], 'debug')
+						for vswap in table_swap:
+							self.logger.log_message("change schema old view", 'debug')
+							db_handler["cursor"].execute(vswap[5])		
+							self.logger.log_message("create view on new table", 'debug')
+							db_handler["cursor"].execute(vswap[6])		
 					db_handler["connection"].commit()
-				except:
+					
+				except psycopg2.Error as e:
 					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
 					db_handler["connection"].rollback()
-					continue_replay  = True
+					try_swap  = False
+				except:
+					try_swap  = False
+					raise
 				db_handler["connection"].set_session(autocommit=True)
 				db_handler["cursor"].execute(sql_reset_lock_timeout )
+				
 				
 		
 	def __create_indices(self, db_handler, table):
@@ -373,9 +449,7 @@ class pg_engine(object):
 		for fkey in fk_list:
 			self.logger.log_message('Creating foreign  key %s on table %s. ' % (fkey[4],fkey[3],  ), 'info')
 			db_handler["cursor"].execute(fkey[0])		
-			self.logger.log_message('Validating the foreign  key %s on table %s. ' % (fkey[4],fkey[3],  ), 'info')
-			db_handler["cursor"].execute(fkey[1])		
-	
+			
 	def __create_ref_fkeys(self, db_handler, table):
 		"""
 		The method builds the referencing foreign keys from the existing  to the new table 
@@ -407,44 +481,43 @@ class pg_engine(object):
 			db_handler["cursor"].execute(fkey[0])		
 			self.logger.log_message('Creating foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
 			db_handler["cursor"].execute(fkey[1])		
-			self.logger.log_message('Validating the foreign  key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
-			db_handler["cursor"].execute(fkey[2])		
+			
 
-	def __swap_tables(self, db_handler, table):
+	def __swap_tables_static(self, db_handler, table):
 		"""
 			The method swaps the tables
 		"""
 		sql_swap="""
-		SELECT 
-			format('ALTER TABLE %%I.%%I SET SCHEMA sch_repdrop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
-			format('ALTER TABLE sch_repnew.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
-			format('ALTER TABLE sch_repnew.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
-			format('DROP TABLE sch_repdrop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
-			coalesce(vie.i_id_table=tab.i_id_table,false) b_views,
-			CASE	
-				WHEN vie.i_id_table IS NOT NULL
-				THEN
-					vie.t_change_schema
-			END AS t_change_view_schema,
-			CASE	
-				WHEN vie.i_id_table IS NOT NULL
-				THEN
-					vie.t_create_view
-			END AS t_create_view,
-			vie.v_view_name,
-			tab.v_schema_name,
-			tab.v_old_table_name,
-			tab.v_new_table_name
+			SELECT 
+				format('ALTER TABLE %%I.%%I SET SCHEMA sch_repdrop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
+				format('ALTER TABLE sch_repnew.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
+				format('ALTER TABLE sch_repnew.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+				format('DROP TABLE sch_repdrop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
+				coalesce(vie.i_id_table=tab.i_id_table,false) b_views,
+				CASE	
+					WHEN vie.i_id_table IS NOT NULL
+					THEN
+						vie.t_change_schema
+				END AS t_change_view_schema,
+				CASE	
+					WHEN vie.i_id_table IS NOT NULL
+					THEN
+						vie.t_create_view
+				END AS t_create_view,
+				vie.v_view_name,
+				tab.v_schema_name,
+				tab.v_old_table_name,
+				tab.v_new_table_name
 
-			
-		FROM 
-			sch_repcloud.t_table_repack tab 
-			LEFT OUTER JOIN sch_repcloud.t_view_def vie
-				ON vie.i_id_table=tab.i_id_table
-		WHERE	
-					tab.v_schema_name=%s
-				AND tab.v_old_table_name=%s
-			;
+				
+			FROM 
+				sch_repcloud.t_table_repack tab 
+				LEFT OUTER JOIN sch_repcloud.t_view_def vie
+					ON vie.i_id_table=tab.i_id_table
+			WHERE	
+						tab.v_schema_name=%s
+					AND tab.v_old_table_name=%s
+				;
 		"""
 		db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
 		table_swap = db_handler["cursor"].fetchall()
@@ -478,10 +551,7 @@ class pg_engine(object):
 			self.__copy_table_data(db_handler, table)
 			self.__create_pkey(db_handler, table)
 			self.__create_indices(db_handler, table)
-			self.__sync_table(db_handler, table, con)
-			self.__create_tab_fkeys(db_handler, table)
-			self.__create_ref_fkeys(db_handler, table)
-			self.__swap_tables(db_handler, table)
+			self.__swap_tables(db_handler, table, con)
 			
 		sql_update_old_size="""
 			UPDATE sch_repcloud.t_table_repack
