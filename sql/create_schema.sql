@@ -80,8 +80,9 @@ CREATE INDEX  idx_oid_old_tab_oid_t_log_replay ON sch_repcloud.t_log_replay  USI
 
 -- functions
 
+
 CREATE OR REPLACE FUNCTION sch_repcloud.fn_replay_change(text,text,integer) 
-RETURNS void as 
+RETURNS bigint as 
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
@@ -89,6 +90,7 @@ DECLARE
 	p_i_max_replay		ALIAS FOR $3;
 	v_rec_replay 		record; 
 	v_i_action_replay	bigint[];
+	v_i_actions 		bigint;
 BEGIN
 	
 	v_i_action_replay:=(
@@ -110,6 +112,23 @@ BEGIN
 		) aid
 	)
 	;
+	
+	v_i_actions:=(
+		SELECT 
+			count(i_action_id)
+		FROM	
+			sch_repcloud.t_log_replay tlog
+			INNER JOIN sch_repcloud.t_table_repack trep
+				ON trep.oid_old_table=tlog.oid_old_tab_oid
+			WHERE 
+					trep.v_schema_name=p_t_schema
+				AND trep.v_old_table_name=p_t_table
+				AND tlog.i_xid_action>trep.xid_copy_start
+				AND tlog.i_action_id NOT IN (SELECT unnest(v_i_action_replay))
+		
+	);
+	
+	
 	FOR v_rec_replay IN SELECT 
 							i_action_id,
 							CASE
@@ -231,7 +250,7 @@ BEGIN
 	END LOOP;
 	DELETE FROM sch_repcloud.t_log_replay WHERE i_action_id=ANY(v_i_action_replay);
 	RAISE DEBUG '%',v_i_action_replay;
-	
+	RETURN v_i_actions;
 END;
 $BODY$
 LANGUAGE plpgsql 
@@ -256,7 +275,7 @@ BEGIN
 	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||v_oid_old_table::text);
 	t_sql_create:=format('
 		CREATE TABLE IF NOT EXISTS sch_repnew.%s
-			(LIKE %I.%I INCLUDING CONSTRAINTS)',
+			(LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
 			v_new_table,
 			p_t_schema,
 			p_t_table
