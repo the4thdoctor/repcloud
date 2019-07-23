@@ -3,6 +3,7 @@ from psycopg2 import sql
 #from psycopg2.extras import RealDictCursor
 from distutils.sysconfig import get_python_lib
 import sys
+import time
 class pg_engine(object):
 	def __init__(self):
 		"""
@@ -176,17 +177,64 @@ class pg_engine(object):
 		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[1],pkey[2],  ), 'info')
 		db_handler["cursor"].execute(pkey[0])
 
+	def __check_consistent_reachable(self, db_handler, table, con):
+		"""
+			The method runs two queries on the pg_stat_user_tables to determine the
+			amount of changes in 60 seconds. Then  returns an estimated amount of max_replay_rows
+			using that information.
+			Then checks if the consistent status can be reached for the given table timing the replay function's run
+		"""
+		max_replay_rows = self.connections[con]["max_replay_rows"]
+		sql_get_mod_tuples = """
+			SELECT
+				(n_tup_ins+n_tup_upd+n_tup_del) AS n_tot_mod
+			FROM
+				pg_stat_user_tables
+			WHERE
+				schemaname=%s
+			AND	relname=%s
+		;
+		"""
+		sql_replay_data = """
+			SELECT sch_repcloud.fn_replay_change(%s,%s,%s);
+		"""
+		
+		
+		self.logger.log_message('Checking the initial value of modified tuples on %s.%s' % (table[1], table[2], ), 'info')
+		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
+		initial_tuples = db_handler["cursor"].fetchone()
+		self.logger.log_message('Got %s. Sleeping 60 seconds.' % (initial_tuples[0], ), 'info')
+		time.sleep(60)
+		self.logger.log_message('Checking the final value of modified tuples on %s.%s' % (table[1], table[2], ), 'info')
+		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
+		final_tuples = db_handler["cursor"].fetchone()
+		update_rate = (int(final_tuples[0])-int(initial_tuples[0]))/60
+		self.logger.log_message('The rate of the modified tuples on %s.%s is %d tuples/second' % (table[1], table[2], update_rate, ), 'info')
+		self.logger.log_message('Checking the replay speed of %s tuples on %s.%s' % (max_replay_rows, table[1], table[2], ), 'info')
+		start_replay = time.time()
+		db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
+		end_replay = time.time()
+		replay_time = end_replay- start_replay
+		replay_rate = int(max_replay_rows)/replay_time
+		self.logger.log_message('The replay rate on %s.%s for %s tuples took %s' % (table[1], table[2], max_replay_rows,replay_time,  ), 'info')
+		self.logger.log_message('The replay rate on %s.%s is %s tuples/second' % (table[1], table[2], replay_rate, ), 'info')
+		
+		
+		if replay_rate>update_rate:
+			self.logger.log_message('The replay rate on %s.%s is sufficient to reach the consistent status.' % (table[1], table[2],  ), 'info')
+		else:
+			self.logger.log_message('The replay rate on %s.%s is not sufficient to reach the consistent status. Aborting the repack.' % (table[1], table[2],  ), 'info')
+			sys.exit()
 	def __swap_tables(self, db_handler, table, con):
 		"""
 		The method replays the table's data then tries to swap the origin table with the new one
 		"""
 		continue_replay = True
 		max_replay_rows = self.connections[con]["max_replay_rows"]
-		last_replay_rows = int(max_replay_rows)*10
 		lock_timeout = self.connections[con]["lock_timeout"]
 		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
-		sql_lock_table = """LOCK TABLE "%s"."%s" in EXCLUSIVE MODE; """ % (table[1], table[2],)
+		sql_lock_table = """LOCK TABLE "%s"."%s" in ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
 		sql_replay_data = """
 			SELECT sch_repcloud.fn_replay_change(%s,%s,%s);
 		"""
@@ -261,6 +309,24 @@ class pg_engine(object):
 				;
 		"""
 			
+		sql_check_rows = """
+			SELECT 
+				count(i_action_id)
+			FROM	
+				sch_repcloud.t_log_replay tlog
+				INNER JOIN sch_repcloud.t_table_repack trep
+					ON trep.oid_old_table=tlog.oid_old_tab_oid
+				WHERE 
+						trep.v_schema_name=%s
+					AND trep.v_old_table_name=%s
+					AND tlog.i_xid_action>trep.xid_copy_start
+			;
+		"""
+		
+		
+			
+			
+		
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
@@ -273,37 +339,47 @@ class pg_engine(object):
 				
 				try:
 					db_handler["cursor"].execute(sql_lock_table)
-					continue_replay = False
-					run_last_replay = True
-					while run_last_replay:
-						self.logger.log_message('Replaying the last bunch of data data on table %s.%s  max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
-						db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
-						last_replay = db_handler["cursor"].fetchone()
-						run_last_replay = int(last_replay[0])>0
-					db_handler["cursor"].execute(sql_update_sync_xid,  (table[1], table[2],  ))
-					db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
-					reset_sequence = db_handler["cursor"].fetchone()
-					self.logger.log_message("resetting sequence on new table" , 'debug')
-					db_handler["cursor"].execute(reset_sequence[0])		
-					table_swap = db_handler["cursor"].fetchall()
-					db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
-					table_swap = db_handler["cursor"].fetchall()
-					tswap = table_swap[0]
-					self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
-					db_handler["cursor"].execute(tswap[0])		
-					self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
-					db_handler["cursor"].execute(tswap[1])	
-					self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
-					db_handler["cursor"].execute(tswap[2])	
-					if  tswap[4]:
-						self.logger.log_message("table has views: %s" %tswap[4], 'debug')
-						for vswap in table_swap:
-							self.logger.log_message("change schema old view", 'debug')
-							db_handler["cursor"].execute(vswap[5])		
-							self.logger.log_message("create view on new table", 'debug')
-							db_handler["cursor"].execute(vswap[6])		
-					db_handler["connection"].commit()
-					
+					self.logger.log_message('Lock  acquired, checking if we still have a reasonable amount of rows to replay.',  'info')
+					db_handler["cursor"].execute(sql_check_rows,  (table[1], table[2],  ))
+					last_replay = db_handler["cursor"].fetchone()
+					can_swap = int(last_replay[0])<int(max_replay_rows)
+					if can_swap:
+						self.logger.log_message('Found %s rows left for replay. Starting the swap.' % last_replay[0],  'info')
+						continue_replay = False
+						run_last_replay = True
+						while run_last_replay:
+							self.logger.log_message('Replaying the last bunch of data data on table %s.%s  max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
+							db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
+							last_replay = db_handler["cursor"].fetchone()
+							run_last_replay = int(last_replay[0])>0
+						db_handler["cursor"].execute(sql_update_sync_xid,  (table[1], table[2],  ))
+						db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
+						reset_sequence = db_handler["cursor"].fetchone()
+						self.logger.log_message("resetting sequence on new table" , 'debug')
+						db_handler["cursor"].execute(reset_sequence[0])		
+						table_swap = db_handler["cursor"].fetchall()
+						db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
+						table_swap = db_handler["cursor"].fetchall()
+						tswap = table_swap[0]
+						self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
+						db_handler["cursor"].execute(tswap[0])		
+						self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
+						db_handler["cursor"].execute(tswap[1])	
+						self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
+						db_handler["cursor"].execute(tswap[2])	
+						if  tswap[4]:
+							self.logger.log_message("table has views: %s" %tswap[4], 'debug')
+							for vswap in table_swap:
+								self.logger.log_message("change schema old view", 'debug')
+								db_handler["cursor"].execute(vswap[5])		
+								self.logger.log_message("create view on new table", 'debug')
+								db_handler["cursor"].execute(vswap[6])		
+						db_handler["connection"].commit()
+					else:
+						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
+						continue_replay = True
+						db_handler["connection"].commit()
+						
 				except psycopg2.Error as e:
 					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
 					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
@@ -551,6 +627,7 @@ class pg_engine(object):
 			self.__copy_table_data(db_handler, table)
 			self.__create_pkey(db_handler, table)
 			self.__create_indices(db_handler, table)
+			self.__check_consistent_reachable(db_handler, table, con)
 			self.__swap_tables(db_handler, table, con)
 			
 		sql_update_old_size="""
