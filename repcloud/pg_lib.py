@@ -177,6 +177,87 @@ class pg_engine(object):
 		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[1],pkey[2],  ), 'info')
 		db_handler["cursor"].execute(pkey[0])
 
+	def __remove_table_repack(self, db_handler, table, con):
+		"""
+			The method disables the triggers on the origin's table then 
+			removes the new table and cleanup the log_replay table
+		"""
+		try_disable = True
+		try_drop = True
+		lock_timeout = self.connections[con]["lock_timeout"]
+		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
+		sql_reset_lock_timeout = """SET lock_timeout = default;"""
+		
+		sql_disable_trg = """
+		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_delete;
+		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_insert;
+		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_update;
+		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_truncate;
+		""" % (table[1], table[2],table[1], table[2], table[1], table[2], table[1], table[2],   )
+
+		sql_drop_trg = """
+			DROP TRIGGER z_repcloud_insert ON  %s.%s ;
+			DROP TRIGGER z_repcloud_delete ON  %s.%s ;
+			DROP TRIGGER z_repcloud_update ON  %s.%s ;
+			DROP TRIGGER z_repcloud_truncate ON  %s.%s ;
+		""" % (table[1], table[2],table[1], table[2], table[1], table[2], table[1], table[2],   )
+		sql_cleanup_log_table = """
+			DELETE FROM sch_repcloud.t_log_replay 
+			WHERE oid_old_tab_oid =
+				(
+					SELECT
+						oid_old_table 
+					FROM 
+						sch_repcloud.t_table_repack
+					WHERE 
+							v_schema_name=%s
+						AND v_old_table_name=%s
+				)
+			;
+
+		"""
+		sql_get_drop_table="""
+			SELECT
+				format('DROP TABLE sch_repnew.%%I;',v_new_table_name)	
+			FROM 
+				sch_repcloud.t_table_repack
+			WHERE 
+					v_schema_name=%s
+				AND v_old_table_name=%s
+			;
+		"""
+
+		sql_vacuum_full_log = """VACUUM FULL  sch_repcloud.t_log_replay ;"""
+		db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
+		while try_disable:
+			try:
+				db_handler["cursor"].execute(sql_disable_trg)
+				try_disable = False
+			except psycopg2.Error as e:
+					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s for disabling the triggers' % (table[1], table[2] ), 'info')
+					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+			except:
+				raise
+		db_handler["cursor"].execute(sql_reset_lock_timeout,  )
+		self.logger.log_message('Cleaning the log table from the %s.%s logged rows' % (table[1], table[2] ), 'info')
+		db_handler["cursor"].execute(sql_cleanup_log_table,  (table[1], table[2],  ))
+		db_handler["cursor"].execute(sql_vacuum_full_log,  )
+		self.logger.log_message('Dropping the repack table in sch_repnew schema' , 'info')
+		db_handler["cursor"].execute(sql_get_drop_table,  (table[1], table[2],  ))
+		drop_stat = db_handler["cursor"].fetchone()
+		db_handler["cursor"].execute(drop_stat[0])
+		db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
+		while try_drop:
+			try:
+				db_handler["cursor"].execute(sql_drop_trg)
+				try_drop = False
+			except psycopg2.Error as e:
+					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s for dropping the triggers' % (table[1], table[2] ), 'info')
+					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+			except:
+				raise
+			db_handler["cursor"].execute(sql_reset_lock_timeout,  )
+			
 	def __check_consistent_reachable(self, db_handler, table, con):
 		"""
 			The method runs two queries on the pg_stat_user_tables to determine the
@@ -222,9 +303,12 @@ class pg_engine(object):
 		
 		if replay_rate>update_rate:
 			self.logger.log_message('The replay rate on %s.%s is sufficient to reach the consistent status.' % (table[1], table[2],  ), 'info')
+			return True
 		else:
 			self.logger.log_message('The replay rate on %s.%s is not sufficient to reach the consistent status. Aborting the repack.' % (table[1], table[2],  ), 'info')
-			sys.exit()
+			return False
+			
+	
 	def __swap_tables(self, db_handler, table, con):
 		"""
 		The method replays the table's data then tries to swap the origin table with the new one
@@ -627,32 +711,11 @@ class pg_engine(object):
 			self.__copy_table_data(db_handler, table)
 			self.__create_pkey(db_handler, table)
 			self.__create_indices(db_handler, table)
-			self.__check_consistent_reachable(db_handler, table, con)
-			self.__swap_tables(db_handler, table, con)
-			
-		sql_update_old_size="""
-			UPDATE sch_repcloud.t_table_repack
-			SET
-				i_size_start=blt.i_tab_size     
-			FROM  sch_repcloud.v_tab_bloat blt
-				WHERE
-					t_table_repack.oid_old_table =  blt.o_tab_oid
-			;
-
-			"""
-		sql_update_new_size="""
-			UPDATE sch_repcloud.t_table_repack
-			SET
-				i_size_end=blt.i_tab_size     
-			FROM  sch_repcloud.v_tab_bloat blt
-				WHERE
-					t_table_repack.oid_new_table =  blt.o_tab_oid
-			;
-
-			"""
-			
-		db_handler["cursor"].execute(sql_update_old_size)
-		db_handler["cursor"].execute(sql_update_new_size)
+			consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
+			if consistent_reachable:
+				self.__swap_tables(db_handler, table, con)
+			else:
+				self.__remove_table_repack(db_handler, table, con)
 		self.__disconnect_db(db_handler)
 		
 	def __repack_loop(self, con):
