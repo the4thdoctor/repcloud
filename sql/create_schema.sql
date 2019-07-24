@@ -21,6 +21,7 @@ CREATE TABLE t_table_repack
 	oid_new_table oid,
 	v_old_table_name character varying(100) NOT NULL,
 	v_new_table_name  character varying(100) NOT NULL,
+	v_log_table_name  character varying(100) NOT NULL,
 	v_schema_name character varying(100) NOT NULL,
 	t_tab_pk text[],
 	v_repack_step character varying(100),
@@ -91,9 +92,60 @@ DECLARE
 	v_rec_replay 		record; 
 	v_i_action_replay	bigint[];
 	v_i_actions 		bigint;
+	v_t_tab_data		text[];
+	v_t_sql_replay		text;
+	v_t_sql_act_rep		text;
+	v_t_sql_act 		text;
+	v_t_sql_delete 		text;
+	v_r_replay			record;
 BEGIN
+
+
 	
-	v_i_action_replay:=(
+	
+	v_t_tab_data:=(
+		SELECT 
+			ARRAY[
+				v_new_table_name, -- 1
+				array_to_string(array_agg(rec_new),','),-- 2,
+				array_to_string(array_agg(rec_old),','),-- 3,
+				array_to_string(array_agg(att_list),','),-- 4,
+				array_to_string(array_agg(att_markers),','),-- 5,
+				array_to_string(array_agg(att_upd),','),-- 6,
+				array_to_string(array_agg(att_upd) FILTER (WHERE att_list=ANY(t_tab_pk) ),','),-- 7
+				array_to_string(array_agg(rec_old) FILTER (WHERE att_list=ANY(t_tab_pk) ),','), -- 8
+				array_to_string(array_agg(rec_new) FILTER (WHERE att_list=ANY(t_tab_pk) ),','),-- 9
+				v_log_table_name -- 10
+			]
+		FROM
+		(
+			SELECT 
+				tab.oid_old_table,
+				tab.t_tab_pk,
+				tab.v_new_table_name,
+				tab.v_log_table_name,
+				format('(rec_new_data).%I',att.attname,att.attname) rec_new,
+				format('(rec_old_data).%I',att.attname) rec_old,
+				format('%I',att.attname) att_list,
+				'%L' AS att_markers,
+				format('%I=%%L',att.attname) att_upd
+			FROM 
+				sch_repcloud.t_table_repack tab 
+				INNER JOIN pg_catalog.pg_attribute att 
+					ON att.attrelid=tab.oid_old_table
+			WHERE 
+					tab.v_schema_name=p_t_schema
+				AND	tab.v_old_table_name=p_t_table
+				AND att.attnum>0
+				
+		) tab
+		GROUP BY
+			v_new_table_name,
+			v_log_table_name
+	);
+	
+
+	v_t_sql_act_rep:=format('
 		SELECT 
 			array_agg(i_action_id)
 		FROM
@@ -101,159 +153,180 @@ BEGIN
 			SELECT 
 				i_action_id
 			FROM 
-				sch_repcloud.t_log_replay tlog
+				sch_repnew.%I tlog
 			INNER JOIN sch_repcloud.t_table_repack trep
 				ON trep.oid_old_table=tlog.oid_old_tab_oid
 			WHERE 
-					trep.v_schema_name=p_t_schema
-				AND trep.v_old_table_name=p_t_table
+					trep.v_schema_name=%L
+				AND trep.v_old_table_name=%L
 				AND tlog.i_xid_action>trep.xid_copy_start
-			LIMIT p_i_max_replay
+			LIMIT %L
 		) aid
-	)
 	;
-	
-	v_i_actions:=(
+	',
+	v_t_tab_data[10],
+	p_t_schema,
+	p_t_table,
+	p_i_max_replay
+	);
+	EXECUTE v_t_sql_act_rep INTO v_i_action_replay;
+
+	v_t_sql_act:=format('
 		SELECT 
 			count(i_action_id)
 		FROM	
-			sch_repcloud.t_log_replay tlog
+			sch_repnew.%I tlog 
 			INNER JOIN sch_repcloud.t_table_repack trep
 				ON trep.oid_old_table=tlog.oid_old_tab_oid
 			WHERE 
-					trep.v_schema_name=p_t_schema
-				AND trep.v_old_table_name=p_t_table
+					trep.v_schema_name=%L
+				AND trep.v_old_table_name=%L
 				AND tlog.i_xid_action>trep.xid_copy_start
-				AND tlog.i_action_id NOT IN (SELECT unnest(v_i_action_replay))
-		
+				AND tlog.i_action_id NOT IN (SELECT unnest(%L::bigint[]))
+	;
+	',
+	v_t_tab_data[10],
+	p_t_schema,
+	p_t_table,
+	v_i_action_replay
 	);
+
+	EXECUTE v_t_sql_act INTO v_i_actions;
+
 	
+
+	v_t_sql_replay:=format(
+		'
+			SELECT 
+				i_action_id,
+				i_xid_action,
+				v_action,
+				CASE 
+					WHEN v_action=''INSERT''
+					THEN
+						format(''INSERT INTO sch_repnew.%%I (%%s) VALUES (%%s);'',
+						%L,
+						%L,
+						format(%L,%s)
+						)				
+					WHEN v_action=''UPDATE''
+					THEN
+						format(''UPDATE sch_repnew.%%I SET %%s WHERE %%s'',
+						%L,
+						format(%L,%s),
+						format(%L,%s)
+						)
+					WHEN v_action=''DELETE''
+					THEN
+						format(''DELETE FROM sch_repnew.%%I WHERE %%s'',
+						%L,
+						format(%L,%s)
+						)
+			
+				END
+				AS rec_act
+				
+			FROM 
+				sch_repnew.%I
+			WHERE i_action_id = ANY(%L)
+			ORDER BY 
+				i_action_id,
+				i_xid_action
+			
+		',
+		v_t_tab_data[1],
+		v_t_tab_data[4],
+		v_t_tab_data[5],
+		v_t_tab_data[2],
+		v_t_tab_data[1],
+		v_t_tab_data[6],
+		v_t_tab_data[2],
+		v_t_tab_data[7],
+		v_t_tab_data[8],
+		v_t_tab_data[1],
+		v_t_tab_data[7],
+		v_t_tab_data[8],
+		v_t_tab_data[10],
+		v_i_action_replay
 	
-	FOR v_rec_replay IN SELECT 
-							i_action_id,
-							CASE
-							WHEN v_action = 'TRUNCATE'
-							THEN 
-								format(
-									'TRUNCATE TABLE sch_repnew.%I;',
-									v_new_table_name
-									
-								)
-						
-							WHEN v_action = 'INSERT'
-							THEN
-								format(
-									'INSERT INTO sch_repnew.%I %s;',
-									v_new_table_name,
-									t_dec_data
-									
-								)
-							WHEN v_action = 'UPDATE'
-							THEN
-								format(
-									'UPDATE sch_repnew.%I SET %s WHERE %s;',
-									v_new_table_name,
-									t_dec_data,
-									t_pk_data
-								)
-							WHEN v_action = 'DELETE'
-							THEN
-								format(
-									'DELETE FROM sch_repnew.%I WHERE %s;',
-									v_new_table_name,
-									t_pk_data
-								)
-							
-						END AS t_sql
-						FROM
-						( 
-							SELECT 
-								i_action_id,
-								v_new_table_name,
-								string_agg(DISTINCT
-								CASE
-									WHEN t_tab_pk IS NOT NULL
-									THEN
-										format(
-											'%I=%L',
-											t_tab_pk,
-											CASE 
-												WHEN  v_action = 'UPDATE' OR v_action = 'DELETE'
-												THEN
-													jb_old_data->>t_tab_pk
-												ELSE
-													jb_new_data->>t_tab_pk
-											END 	
-									
-										)
-								END 
-								,' AND ') as  t_pk_data,
-								t_dec_data,
-								v_action
-							FROM
-							(
-								SELECT 
-									CASE
-										WHEN v_action = 'INSERT'
-										THEN
-											format('(%s) VALUES (%s)',string_agg(format('%I',jb_cols),','),string_agg(format('%L',jb_new_data->>jb_cols),','))
-										WHEN v_action = 'UPDATE'
-										THEN
-											string_agg(format('%I=%L',jb_cols,jb_new_data->>jb_cols),',')
-											
-									END AS t_dec_data,
-									unnest(t_tab_pk) as t_tab_pk,
-									jb_new_data,
-									jb_old_data,
-									v_action,
-									i_action_id,
-									v_new_table_name
-								FROM 
-								(
-									SELECT 	
-										i_action_id,
-										tlog.jb_new_data,
-										tlog.jb_old_data,
-										(jsonb_each_text(coalesce(tlog.jb_new_data,tlog.jb_old_data,'{"foo":"bar"}'::jsonb))).key as jb_cols, --dirty hack to get the truncate event
-										trep.t_tab_pk,
-										tlog.v_action,
-										trep.v_new_table_name
-									FROM
-										sch_repcloud.t_log_replay tlog
-										INNER JOIN sch_repcloud.t_table_repack trep
-										ON trep.oid_old_table=tlog.oid_old_tab_oid
-									WHERE 
-											tlog.i_action_id=ANY(v_i_action_replay)
-									ORDER BY 
-										i_action_id,
-										i_xid_action
-								) repd
-								GROUP BY 
-									v_action,
-									jb_new_data,
-									jb_old_data,
-									t_tab_pk,
-									i_action_id,
-									v_new_table_name
-							) comb
-							GROUP BY 
-								t_dec_data,
-								i_action_id,
-								v_new_table_name,
-								v_action
-							ORDER BY i_action_id
-							LIMIT p_i_max_replay
-						) tsql
+	);
+	RAISE DEBUG '%',v_t_sql_replay;
+	FOR v_r_replay IN EXECUTE v_t_sql_replay
 	LOOP
-		RAISE DEBUG '%',v_rec_replay.t_sql ;
-		EXECUTE v_rec_replay.t_sql;
+		EXECUTE v_r_replay.rec_act;
 	END LOOP;
-	DELETE FROM sch_repcloud.t_log_replay WHERE i_action_id=ANY(v_i_action_replay);
-	RAISE DEBUG '%',v_i_action_replay;
+	v_t_sql_delete:=format(
+		'DELETE FROM sch_repnew.%I WHERE i_action_id=ANY(%L::bigint[]);',
+		v_t_tab_data[10],
+		v_i_action_replay
+	
+	);	
+	EXECUTE v_t_sql_delete;
+
+	RAISE DEBUG '%',v_t_sql_act;
 	RETURN v_i_actions;
 END;
 $BODY$
 LANGUAGE plpgsql 
+;
+
+ 
+
+
+
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_log_table(text,text) 
+RETURNS VOID as 
+$BODY$
+DECLARE
+	p_t_schema			ALIAS FOR $1;
+	p_t_table			ALIAS FOR $2;
+	v_t_sql_create		text;
+	v_t_log				text[];
+BEGIN
+	v_t_log:=(
+		SELECT 
+			ARRAY[
+				v_log_table_name,
+				v_schema_name,
+				v_old_table_name
+
+				]
+		FROM 
+			sch_repcloud.t_table_repack
+		WHERE	
+			v_schema_name=p_t_schema
+			AND v_old_table_name=p_t_table
+	);
+	v_t_sql_create:=format('
+		CREATE TABLE IF NOT EXISTS sch_repnew.%I
+		(
+			i_action_id bigserial ,
+			i_xid_action bigint NOT NULL,
+			oid_old_tab_oid bigint NOT NULL,
+			v_action character varying(20) NOT NULL,
+			rec_new_data %I.%I ,
+			rec_old_data %I.%I ,
+			ts_action timestamp with time zone NOT NULL DEFAULT clock_timestamp()
+		
+		);
+		ALTER TABLE sch_repnew.%I ADD CONSTRAINT pk_t_log_replay PRIMARY KEY (i_action_id);
+		CREATE INDEX  idx_xid_action_t_log_replay_test ON sch_repnew.%I  USING btree(i_xid_action);	
+		CREATE INDEX  idx_oid_old_tab_oid_t_log_replay_test ON sch_repnew.%I  USING btree(oid_old_tab_oid);
+	',
+	v_t_log[1],
+	v_t_log[2],	
+	v_t_log[3],
+	v_t_log[2],	
+	v_t_log[3],
+	v_t_log[1],
+	v_t_log[1],
+	v_t_log[1]
+
+	);
+	EXECUTE v_t_sql_create;
+END;
+$BODY$
+LANGUAGE plpgsql
 ;
 
 CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_repack_table(text,text) 
@@ -263,6 +336,7 @@ DECLARE
 	p_t_schema			ALIAS FOR $1;
 	p_t_table			ALIAS FOR $2;
 	v_new_table			character varying(64);
+	v_log_table	character varying(64);
 	v_i_id_table		bigint;
 	t_sql_create 		text;
 	t_sql_alter 		text;
@@ -273,6 +347,8 @@ DECLARE
 BEGIN
 	v_oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
 	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||v_oid_old_table::text);
+	v_log_table:=format('%I',v_new_table::character varying(30)||'_log');
+
 	t_sql_create:=format('
 		CREATE TABLE IF NOT EXISTS sch_repnew.%s
 			(LIKE %I.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',
@@ -316,7 +392,8 @@ BEGIN
 			v_old_table_name,
 			oid_new_table,
 			v_new_table_name,
-			v_schema_name
+			v_schema_name,
+			v_log_table_name
 		)
 		VALUES 
 			(
@@ -324,14 +401,16 @@ BEGIN
 				p_t_table,
 				v_oid_new_table,
 				v_new_table,
-				p_t_schema
+				p_t_schema,
+				v_log_table
 			) 
 		ON CONFLICT (v_schema_name,v_old_table_name)
 			DO UPDATE 
 				SET 
 					v_new_table_name=v_new_table,
 					oid_old_table=v_oid_old_table,
-					oid_new_table=v_oid_new_table
+					oid_new_table=v_oid_new_table,
+					v_log_table_name=v_log_table
 		RETURNING i_id_table INTO v_i_id_table
 	;	
 
@@ -451,102 +530,79 @@ $BODY$
 LANGUAGE plpgsql 
 ;
 
-CREATE OR REPLACE FUNCTION fn_log_insert() 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_log_data() 
 RETURNS TRIGGER as 
 $BODY$
 DECLARE
 	v_t_sql_insert	text;
+	v_t_log_table	text;
 	v_i_action_xid	bigint;
 	v_old_row		record;
 	v_new_row		record;
 BEGIN
 	v_i_action_xid:=(txid_current()::bigint);
-	v_t_sql_insert:=format(
-		'INSERT INTO sch_repcloud.t_log_replay
-		(
-			i_xid_action,
-			v_action,
-			jb_new_data,
-			oid_old_tab_oid
-			
-		)
-		VALUES
-		(
-			%L,
-			%L,
-			%L,
-			%L
-		)
-		',
-		v_i_action_xid,
-		TG_OP,
-		row_to_json(NEW),
-		TG_RELID
-		);
-	EXECUTE v_t_sql_insert;
-	RETURN NULL;
-END
-$BODY$
-LANGUAGE plpgsql 
-;
 
-CREATE OR REPLACE FUNCTION fn_log_update() 
-RETURNS TRIGGER as 
-$BODY$
-DECLARE
-	v_t_sql_insert	text;
-	v_i_action_xid	bigint;
-	v_old_row		record;
-	v_new_row		record;
-BEGIN
-	v_i_action_xid:=(txid_current()::bigint);
-	v_t_sql_insert:=format(
-	'INSERT INTO sch_repcloud.t_log_replay
-	(
-		i_xid_action,
-		v_action,
-		jb_new_data,
-		jb_old_data,
-		oid_old_tab_oid
-	)
-	VALUES
-	(
-		%L,
-		%L,
-		%L,
-		%L,
-		%L
-	)
-	',
-	v_i_action_xid,
-	TG_OP,
-	row_to_json(NEW),
-	row_to_json(OLD),
-	TG_RELID
-	);
-	EXECUTE v_t_sql_insert;
-	RETURN NULL;
-END
-$BODY$
-LANGUAGE plpgsql 
-;
-
-CREATE OR REPLACE FUNCTION fn_log_delete() 
-RETURNS TRIGGER as 
-$BODY$
-DECLARE
-	v_t_sql_insert	text;
-	v_i_action_xid	bigint;
-	v_old_row		record;
-	v_new_row		record;
-BEGIN
-	v_i_action_xid:=(txid_current()::bigint);
+	v_t_log_table:=format('%s_%s_log',TG_TABLE_NAME,TG_RELID);
+	IF TG_OP ='INSERT'
+	THEN
 		v_t_sql_insert:=format(
-		'INSERT INTO sch_repcloud.t_log_replay
+			'INSERT INTO sch_repnew.%I
+			(
+				i_xid_action,
+				v_action,
+				rec_new_data,
+				oid_old_tab_oid
+				
+			)
+			VALUES
+			(
+				%L,
+				%L,
+				%L,
+				%L
+			)
+			',
+			v_t_log_table,
+			v_i_action_xid,
+			TG_OP,
+			NEW,
+			TG_RELID
+			);
+	ELSEIF TG_OP='UPDATE'
+	THEN
+	v_t_sql_insert:=format(
+		'INSERT INTO sch_repnew.%I
 		(
 			i_xid_action,
 			v_action,
-			jb_old_data,
+			rec_new_data,
+			rec_old_data,
+			oid_old_tab_oid
+		)
+		VALUES
+		(
+			%L,
+			%L,
+			%L,
+			%L,
+			%L
+		)
+		',
+		v_t_log_table,
+		v_i_action_xid,
+		TG_OP,
+		NEW,
+		OLD,
+		TG_RELID
+		);
+	ELSEIF TG_OP='DELETE'
+	THEN
+		v_t_sql_insert:=format(
+		'INSERT INTO sch_repnew.%I
+		(
+			i_xid_action,
+			v_action,
+			rec_old_data,
 			oid_old_tab_oid
 		)
 		VALUES
@@ -557,30 +613,35 @@ BEGIN
 			%L
 		)
 		',
+		v_t_log_table,
 		v_i_action_xid,
 		TG_OP,
-		row_to_json(OLD),
+		OLD,
 		TG_RELID
 		);
+	END IF;
 	EXECUTE v_t_sql_insert;
 	RETURN NULL;
 END
 $BODY$
 LANGUAGE plpgsql 
 ;
+
 
 CREATE OR REPLACE FUNCTION fn_log_truncate() 
 RETURNS TRIGGER as 
 $BODY$
 DECLARE
 	v_t_sql_insert	text;
+	v_t_log_table	text;
 	v_i_action_xid	bigint;
 	v_old_row		record;
 	v_new_row		record;
 BEGIN
+	v_t_log_table:=format('%s_%s_log',TG_TABLE_NAME,TG_RELID);
 	v_i_action_xid:=(txid_current()::bigint);
 		v_t_sql_insert:=format(
-		'INSERT INTO sch_repcloud.t_log_replay
+		'INSERT INTO sch_repnew.%I
 		(
 			i_xid_action,
 			v_action,
@@ -593,6 +654,7 @@ BEGIN
 			%L
 		)
 		',
+		v_t_log_table,
 		v_i_action_xid,
 		TG_OP,
 		TG_RELID
@@ -603,104 +665,6 @@ END
 $BODY$
 LANGUAGE plpgsql 
 ;
-
-
-CREATE OR REPLACE FUNCTION sch_repcloud.fn_dml_new_tab() 
-RETURNS trigger as 
-$BODY$
-DECLARE
-	v_jb_row_image	jsonb;
-	v_jb_row_ident	jsonb;
-	v_t_tab_pk		text;
-	v_t_tab_dml		text;
-	v_t_tab_name	text;
-BEGIN
-	v_t_tab_name=format('%s_%s',TG_TABLE_NAME,TG_RELID);
-	IF TG_OP = 'INSERT'
-	THEN
-		v_jb_row_image:=row_to_json(NEW);
-		v_jb_row_ident:=v_jb_row_image;
-		
-	
-	ELSEIF TG_OP = 'UPDATE'
-	THEN
-		v_jb_row_image:=row_to_json(NEW);
-		v_jb_row_ident:=row_to_json(OLD);
-	ELSEIF TG_OP = 'DELETE'
-	THEN
-		v_jb_row_image:=row_to_json(OLD);
-		v_jb_row_ident:=v_jb_row_image;
-	END IF;
-
-	v_t_tab_pk:=(
-		SELECT
-			string_agg(
-				format(
-					'%I=%L',
-					t_tab_pk,
-					v_jb_row_ident->>t_tab_pk
-							
-					)
-				,' AND '
-				)
-		FROM
-			(
-				SELECT
-					unnest(t_tab_pk) t_tab_pk
-				FROM 
-					sch_repcloud.t_table_repack 
-				WHERE
-					oid_old_table=TG_RELID
-			) pk		
-		);
-	
-		v_t_tab_dml:=(
-			SELECT 
-				CASE
-					WHEN TG_OP = 'INSERT'
-					THEN
-						format(
-							'INSERT INTO sch_repnew.%s (%s) VALUES (%s);',
-							v_t_tab_name,
-							string_agg(format('%I',jb_cols),','),
-							string_agg(format('%L',v_jb_row_image->>jb_cols),',')
-							)
-					WHEN TG_OP = 'UPDATE'
-					THEN
-						format(
-							'UPDATE sch_repnew.%s SET %s WHERE %s;',
-							v_t_tab_name,
-							string_agg(format('%I=%L',jb_cols,v_jb_row_image->>jb_cols),','),
-							v_t_tab_pk
-							)
-					WHEN TG_OP = 'DELETE'
-					THEN
-						format(
-							'DELETE FROM sch_repnew.%s WHERE %s;',
-							v_t_tab_name,
-							v_t_tab_pk
-							)
-						
-				END AS t_dec_data
-			FROM 
-			(
-				SELECT 
-					(jsonb_each_text(v_jb_row_image)).key as jb_cols
-			) col
-		);
-		
-		
-	
-	RAISE DEBUG '%', v_jb_row_image;
-	RAISE DEBUG '%', v_t_tab_pk;
-	RAISE DEBUG '%', v_t_tab_dml;
-	EXECUTE v_t_tab_dml;
-	RETURN NULL;
-END;
-$BODY$
-LANGUAGE plpgsql 
-;
-
 
 --VIEWS
 

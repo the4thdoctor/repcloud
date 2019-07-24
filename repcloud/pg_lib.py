@@ -150,10 +150,12 @@ class pg_engine(object):
 		"""
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
 		"""
+		sql_create_new = """SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
+		sql_create_log = """SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
 		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
-		sql_create="""SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
-		db_handler["cursor"].execute(sql_create,  (table[1], table[2], ))
+		db_handler["cursor"].execute(sql_create_new,  (table[1], table[2], ))
 		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
+		db_handler["cursor"].execute(sql_create_log,  (table[1], table[2], ))
 		
 	def __create_pkey(self, db_handler, table):
 		"""
@@ -504,28 +506,15 @@ class pg_engine(object):
 		"""
 			The method copy the data from the origin's table to the new one
 		"""
-		self.logger.log_message('Creating the logger trigger on the table %s.%s' % (table[1], table[0],  ), 'info')
-		sql_create_insert_trigger = """
-			CREATE TRIGGER z_repcloud_insert
-			AFTER INSERT ON %s.%s
-			FOR EACH ROW
-			EXECUTE PROCEDURE sch_repcloud.fn_log_insert()
-			;
-		"""  % (table[1], table[2], )
+		self.logger.log_message('Creating the logger triggers on the table %s.%s' % (table[1], table[0],  ), 'info')
 		
-		sql_create_update_trigger = """
-			CREATE TRIGGER z_repcloud_update
-			AFTER UPDATE ON %s.%s
+		sql_create_data_trigger = """
+			
+		CREATE TRIGGER z_repcloud_log
+			AFTER INSERT OR UPDATE OR DELETE
+			ON %s.%s
 			FOR EACH ROW
-			EXECUTE PROCEDURE sch_repcloud.fn_log_update()
-			;
-		"""  % (table[1], table[2], )
-		
-		sql_create_delete_trigger = """
-			CREATE TRIGGER z_repcloud_delete
-			AFTER DELETE ON %s.%s
-			FOR EACH ROW
-			EXECUTE PROCEDURE sch_repcloud.fn_log_delete()
+			EXECUTE PROCEDURE sch_repcloud.fn_log_data()
 			;
 		"""  % (table[1], table[2], )
 		
@@ -537,24 +526,9 @@ class pg_engine(object):
 			;
 		"""  % (table[1], table[2], )
 
-		sql_create_sync_trigger = """
-			CREATE TRIGGER z_repcloud_sync
-			AFTER 
-			INSERT OR 
-			UPDATE OR 
-			DELETE ON %s.%s
-			FOR EACH ROW
-			EXECUTE PROCEDURE sch_repcloud.fn_dml_new_tab()
-			;
-			ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_sync;
-		"""  % (table[1], table[2],table[1], table[2], )
 
-		
-		db_handler["cursor"].execute(sql_create_insert_trigger )
-		db_handler["cursor"].execute(sql_create_update_trigger )
-		db_handler["cursor"].execute(sql_create_delete_trigger )
+		db_handler["cursor"].execute(sql_create_data_trigger )
 		db_handler["cursor"].execute(sql_create_truncate_trigger )
-		#db_handler["cursor"].execute(sql_create_sync_trigger )
 		
 		sql_get_new_tab = """
 			UPDATE sch_repcloud.t_table_repack 
@@ -714,8 +688,8 @@ class pg_engine(object):
 			consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
 			if consistent_reachable:
 				self.__swap_tables(db_handler, table, con)
-			else:
-				self.__remove_table_repack(db_handler, table, con)
+			#else:
+			#	self.__remove_table_repack(db_handler, table, con)
 		self.__disconnect_db(db_handler)
 		
 	def __repack_loop(self, con):
