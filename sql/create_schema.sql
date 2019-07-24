@@ -60,6 +60,7 @@ CREATE TABLE sch_repcloud.t_view_def (
 	v_view_name CHARACTER VARYING (100),
 	t_change_schema text NOT NULL,
 	t_create_view text NOT NULL,
+	t_drop_view text NOT NULL,
 	CONSTRAINT pk_t_view_def PRIMARY KEY (i_id_view)
 );
 
@@ -474,13 +475,15 @@ BEGIN
 			i_id_table,
 			v_view_name,
 			t_change_schema,
-			t_create_view
+			t_create_view,
+			t_drop_view
 		)
 	SELECT 
 		v_i_id_table,
 		relname,
 		t_change_schema,
-		t_create_view
+		t_create_view,
+		t_drop_view
 	FROM	
 		sch_repcloud.v_get_dep_views
 	WHERE	
@@ -1207,7 +1210,8 @@ AS
 		ad.adsrc,
 		cl.relkind,
 		format('ALTER VIEW %I.%I SET SCHEMA sch_repdrop;',nspv.nspname,clv.relname ) AS t_change_schema,
-		format('CREATE VIEW %I.%I AS %s;',nspv.nspname,clv.relname,pg_get_viewdef(clv.oid)) AS t_create_view
+		format('CREATE VIEW %I.%I AS %s;',nspv.nspname,clv.relname,pg_get_viewdef(clv.oid)) AS t_create_view,
+		format('DROP VIEW %I.%I ;',nspv.nspname,clv.relname) AS t_drop_view
 
 	FROM pg_depend dep
 		LEFT JOIN pg_class cl 

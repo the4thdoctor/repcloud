@@ -374,8 +374,8 @@ class pg_engine(object):
 				CASE	
 					WHEN vie.i_id_table IS NOT NULL
 					THEN
-						vie.t_change_schema
-				END AS t_change_view_schema,
+						vie.t_drop_view
+				END AS t_drop_view,
 				CASE	
 					WHEN vie.i_id_table IS NOT NULL
 					THEN
@@ -468,7 +468,7 @@ class pg_engine(object):
 						if  tswap[4]:
 							self.logger.log_message("table has views: %s" %tswap[4], 'debug')
 							for vswap in table_swap:
-								self.logger.log_message("change schema old view", 'debug')
+								self.logger.log_message("drop old view", 'debug')
 								db_handler["cursor"].execute(vswap[5])		
 								self.logger.log_message("create view on new table", 'debug')
 								db_handler["cursor"].execute(vswap[6])	
