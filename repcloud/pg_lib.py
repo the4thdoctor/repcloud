@@ -199,21 +199,7 @@ class pg_engine(object):
 			DROP TRIGGER z_repcloud_log ON  %s.%s ;
 			DROP TRIGGER z_repcloud_truncate ON  %s.%s ;
 		""" % (table[1], table[2],table[1], table[2],)
-		sql_cleanup_log_table = """
-			DELETE FROM sch_repcloud.t_log_replay 
-			WHERE oid_old_tab_oid =
-				(
-					SELECT
-						oid_old_table 
-					FROM 
-						sch_repcloud.t_table_repack
-					WHERE 
-							v_schema_name=%s
-						AND v_old_table_name=%s
-				)
-			;
-
-		"""
+		
 		sql_get_drop_table="""
 			SELECT
 				format('DROP TABLE sch_repnew.%%I;',v_new_table_name)	as t_drop_new_tab,
@@ -226,7 +212,6 @@ class pg_engine(object):
 			;
 		"""
 
-		sql_vacuum_full_log = """VACUUM FULL  sch_repcloud.t_log_replay ;"""
 		db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
 		while try_disable:
 			try:
@@ -238,9 +223,6 @@ class pg_engine(object):
 			except:
 				raise
 		db_handler["cursor"].execute(sql_reset_lock_timeout,  )
-		self.logger.log_message('Cleaning the log table from the %s.%s logged rows' % (table[1], table[2] ), 'info')
-		db_handler["cursor"].execute(sql_cleanup_log_table,  (table[1], table[2],  ))
-		db_handler["cursor"].execute(sql_vacuum_full_log,  )
 		self.logger.log_message('Dropping the repack table in sch_repnew schema' , 'info')
 		db_handler["cursor"].execute(sql_get_drop_table,  (table[1], table[2],  ))
 		drop_stat = db_handler["cursor"].fetchone()
