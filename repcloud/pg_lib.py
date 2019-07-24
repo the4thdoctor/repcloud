@@ -193,12 +193,12 @@ class pg_engine(object):
 		sql_disable_trg = """
 		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_log;
 		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_truncate;
-		""" % (table[1], table[2],table[1], table[2], table[1], table[2], table[1], table[2],   )
+		""" % (table[1], table[2],table[1], table[2], )
 
 		sql_drop_trg = """
 			DROP TRIGGER z_repcloud_log ON  %s.%s ;
 			DROP TRIGGER z_repcloud_truncate ON  %s.%s ;
-		""" % (table[1], table[2],table[1], table[2], table[1], table[2], table[1], table[2],   )
+		""" % (table[1], table[2],table[1], table[2],)
 		sql_cleanup_log_table = """
 			DELETE FROM sch_repcloud.t_log_replay 
 			WHERE oid_old_tab_oid =
@@ -287,7 +287,7 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
 		initial_tuples = db_handler["cursor"].fetchone()
 		self.logger.log_message('Initial value is %s.' % (initial_tuples[0], ), 'debug')
-		self.logger.log_message('Got %s. Sleeping %d seconds.' % (check_time, initial_tuples[0], ), 'info')
+		self.logger.log_message('Sleeping %d seconds.' % (check_time,  ), 'info')
 		time.sleep(check_time)
 		self.logger.log_message('Checking the final value of modified tuples on %s.%s' % (table[1], table[2], ), 'info')
 		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
@@ -384,8 +384,8 @@ class pg_engine(object):
 				vie.v_view_name,
 				tab.v_schema_name,
 				tab.v_old_table_name,
-				tab.v_new_table_name
-
+				tab.v_new_table_name,
+				tab.v_log_table_name
 				
 			FROM 
 				sch_repcloud.t_table_repack tab 
@@ -401,20 +401,30 @@ class pg_engine(object):
 			SELECT 
 				count(i_action_id)
 			FROM	
-				sch_repcloud.t_log_replay tlog
+				sch_repnew.%s tlog
 				INNER JOIN sch_repcloud.t_table_repack trep
 					ON trep.oid_old_table=tlog.oid_old_tab_oid
 				WHERE 
-						trep.v_schema_name=%s
-					AND trep.v_old_table_name=%s
+						trep.v_schema_name=%%s
+					AND trep.v_old_table_name=%%s
 					AND tlog.i_xid_action>trep.xid_copy_start
 			;
 		"""
 		
 		
-			
-			
+		sql_drop_trg = """
+			DROP TRIGGER z_repcloud_log ON  sch_repdrop.%s ;
+			DROP TRIGGER z_repcloud_truncate ON  sch_repdrop.%s ;
+		""" % (table[2], table[2],)
 		
+		sql_drop_log_table = """DROP TABLE sch_repnew.%s; """
+		
+		sql_drop_old_table = """
+			DROP TABLE sch_repdrop.%s ;
+		""" % (table[2],)
+		db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
+		table_swap = db_handler["cursor"].fetchall()
+		sql_check_rows = sql_check_rows % table_swap[0][11]
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
@@ -446,8 +456,8 @@ class pg_engine(object):
 						if reset_sequence:
 							self.logger.log_message("resetting sequence on new table" , 'debug')
 							db_handler["cursor"].execute(reset_sequence[0])		
-						db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
-						table_swap = db_handler["cursor"].fetchall()
+						self.__create_tab_fkeys(db_handler, table)
+						self.__create_ref_fkeys(db_handler, table)
 						tswap = table_swap[0]
 						self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
 						db_handler["cursor"].execute(tswap[0])		
@@ -461,7 +471,15 @@ class pg_engine(object):
 								self.logger.log_message("change schema old view", 'debug')
 								db_handler["cursor"].execute(vswap[5])		
 								self.logger.log_message("create view on new table", 'debug')
-								db_handler["cursor"].execute(vswap[6])		
+								db_handler["cursor"].execute(vswap[6])	
+						self.logger.log_message("Dropping the logging triggers", 'info')
+						db_handler["cursor"].execute(sql_drop_trg)
+						sql_drop_log_table = sql_drop_log_table % tswap[11]
+						self.logger.log_message("Dropping the log table ", 'info')
+						db_handler["cursor"].execute(sql_drop_log_table)
+						self.logger.log_message("Dropping the old table", 'info')
+						db_handler["cursor"].execute(sql_drop_old_table)
+						
 						db_handler["connection"].commit()
 					else:
 						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
@@ -569,7 +587,7 @@ class pg_engine(object):
 		sql_get_fkeys = """
 			SELECT 
 				t_con_create,
-				t_con_validate,
+				t_con_drop,
 				v_schema_name,
 				v_table_name,
 				v_con_name
@@ -585,6 +603,8 @@ class pg_engine(object):
 		for fkey in fk_list:
 			self.logger.log_message('Creating foreign  key %s on table %s. ' % (fkey[4],fkey[3],  ), 'info')
 			db_handler["cursor"].execute(fkey[0])		
+			self.logger.log_message('Dropping the foreign  key %s on old table %s. ' % (fkey[4],fkey[3],  ), 'info')
+			db_handler["cursor"].execute(fkey[1])		
 			
 	def __create_ref_fkeys(self, db_handler, table):
 		"""
@@ -592,7 +612,7 @@ class pg_engine(object):
 		"""
 		sql_get_fkeys = """
 			SELECT 
-				t_con_rename,
+				t_con_drop,
 				t_con_create,
 				t_con_validate,
 				v_old_ref_table,
@@ -610,10 +630,9 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_get_fkeys,  (table[1], table[2], ))
 		fk_list = db_handler["cursor"].fetchall()
 		for fkey in fk_list:
-			self.logger.log_message("rename: %s" %fkey[0], 'debug')
+			self.logger.log_message("drop: %s" %fkey[0], 'debug')
 			self.logger.log_message("create: %s" %fkey[1], 'debug')
-			self.logger.log_message("validate: %s" %fkey[2], 'debug')
-			self.logger.log_message('Renaming the existing foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
+			self.logger.log_message('Dropping the old  referencing foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
 			db_handler["cursor"].execute(fkey[0])		
 			self.logger.log_message('Creating foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
 			db_handler["cursor"].execute(fkey[1])		

@@ -1057,6 +1057,7 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 	SELECT DISTINCT
 		format('ALTER TABLE ONLY sch_repnew.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,
 		format('ALTER TABLE ONLY sch_repnew.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname) AS t_con_validate,
+		format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',rep.v_schema_name,rep.v_old_table_name ,conname) AS t_con_drop,
 		tab.relname as v_table_name,
 		sch.nspname as v_schema_name,
 		conname AS v_con_name
@@ -1080,7 +1081,7 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 	SELECT 
 		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
-		format('ALTER TABLE ONLY %I.%I RENAME CONSTRAINT %I TO %I;',v_schema_name,v_referencing_table ,v_con_name,v_con_name::character varying(40)||'_old' ) AS t_con_rename,
+		format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_schema_name,v_referencing_table ,v_con_name) AS t_con_drop,
 		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_schema_name,v_referencing_table,v_con_name) AS t_con_validate,
 		v_old_ref_table,
 		v_schema_name,
