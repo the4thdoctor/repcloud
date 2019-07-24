@@ -191,16 +191,12 @@ class pg_engine(object):
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
 		
 		sql_disable_trg = """
-		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_delete;
-		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_insert;
-		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_update;
+		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_log;
 		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_truncate;
 		""" % (table[1], table[2],table[1], table[2], table[1], table[2], table[1], table[2],   )
 
 		sql_drop_trg = """
-			DROP TRIGGER z_repcloud_insert ON  %s.%s ;
-			DROP TRIGGER z_repcloud_delete ON  %s.%s ;
-			DROP TRIGGER z_repcloud_update ON  %s.%s ;
+			DROP TRIGGER z_repcloud_log ON  %s.%s ;
 			DROP TRIGGER z_repcloud_truncate ON  %s.%s ;
 		""" % (table[1], table[2],table[1], table[2], table[1], table[2], table[1], table[2],   )
 		sql_cleanup_log_table = """
@@ -220,7 +216,8 @@ class pg_engine(object):
 		"""
 		sql_get_drop_table="""
 			SELECT
-				format('DROP TABLE sch_repnew.%%I;',v_new_table_name)	
+				format('DROP TABLE sch_repnew.%%I;',v_new_table_name)	as t_drop_new_tab,
+				format('DROP TABLE sch_repnew.%%I;',v_log_table_name )	as t_drop_log_tab
 			FROM 
 				sch_repcloud.t_table_repack
 			WHERE 
@@ -252,6 +249,7 @@ class pg_engine(object):
 		while try_drop:
 			try:
 				db_handler["cursor"].execute(sql_drop_trg)
+				db_handler["cursor"].execute(drop_stat[1])
 				try_drop = False
 			except psycopg2.Error as e:
 					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s for dropping the triggers' % (table[1], table[2] ), 'info')
@@ -263,11 +261,13 @@ class pg_engine(object):
 	def __check_consistent_reachable(self, db_handler, table, con):
 		"""
 			The method runs two queries on the pg_stat_user_tables to determine the
-			amount of changes in 60 seconds. Then  returns an estimated amount of max_replay_rows
+			amount of changes in the time defined by check_time. Then  returns an estimated amount of max_replay_rows
 			using that information.
 			Then checks if the consistent status can be reached for the given table timing the replay function's run
 		"""
 		max_replay_rows = self.connections[con]["max_replay_rows"]
+		check_time = int(self.connections[con]["check_time"])
+
 		sql_get_mod_tuples = """
 			SELECT
 				(n_tup_ins+n_tup_upd+n_tup_del) AS n_tot_mod
@@ -286,12 +286,14 @@ class pg_engine(object):
 		self.logger.log_message('Checking the initial value of modified tuples on %s.%s' % (table[1], table[2], ), 'info')
 		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
 		initial_tuples = db_handler["cursor"].fetchone()
-		self.logger.log_message('Got %s. Sleeping 60 seconds.' % (initial_tuples[0], ), 'info')
-		time.sleep(60)
+		self.logger.log_message('Initial value is %s.' % (initial_tuples[0], ), 'debug')
+		self.logger.log_message('Got %s. Sleeping %d seconds.' % (check_time, initial_tuples[0], ), 'info')
+		time.sleep(check_time)
 		self.logger.log_message('Checking the final value of modified tuples on %s.%s' % (table[1], table[2], ), 'info')
 		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
 		final_tuples = db_handler["cursor"].fetchone()
 		update_rate = (int(final_tuples[0])-int(initial_tuples[0]))/60
+		self.logger.log_message('The final value is %s.' % (final_tuples[0], ), 'debug')
 		self.logger.log_message('The rate of the modified tuples on %s.%s is %d tuples/second' % (table[1], table[2], update_rate, ), 'info')
 		self.logger.log_message('Checking the replay speed of %s tuples on %s.%s' % (max_replay_rows, table[1], table[2], ), 'info')
 		start_replay = time.time()
@@ -299,7 +301,7 @@ class pg_engine(object):
 		end_replay = time.time()
 		replay_time = end_replay- start_replay
 		replay_rate = int(max_replay_rows)/replay_time
-		self.logger.log_message('The replay rate on %s.%s for %s tuples took %s' % (table[1], table[2], max_replay_rows,replay_time,  ), 'info')
+		self.logger.log_message('The procedure replayed on %s.%s %s in %s seconds' % (table[1], table[2], max_replay_rows,replay_time,  ), 'debug')
 		self.logger.log_message('The replay rate on %s.%s is %s tuples/second' % (table[1], table[2], replay_rate, ), 'info')
 		
 		
@@ -441,9 +443,9 @@ class pg_engine(object):
 						db_handler["cursor"].execute(sql_update_sync_xid,  (table[1], table[2],  ))
 						db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
 						reset_sequence = db_handler["cursor"].fetchone()
-						self.logger.log_message("resetting sequence on new table" , 'debug')
-						db_handler["cursor"].execute(reset_sequence[0])		
-						table_swap = db_handler["cursor"].fetchall()
+						if reset_sequence:
+							self.logger.log_message("resetting sequence on new table" , 'debug')
+							db_handler["cursor"].execute(reset_sequence[0])		
 						db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
 						table_swap = db_handler["cursor"].fetchall()
 						tswap = table_swap[0]
@@ -615,63 +617,7 @@ class pg_engine(object):
 			db_handler["cursor"].execute(fkey[0])		
 			self.logger.log_message('Creating foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
 			db_handler["cursor"].execute(fkey[1])		
-			
-
-	def __swap_tables_static(self, db_handler, table):
-		"""
-			The method swaps the tables
-		"""
-		sql_swap="""
-			SELECT 
-				format('ALTER TABLE %%I.%%I SET SCHEMA sch_repdrop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
-				format('ALTER TABLE sch_repnew.%%I RENAME TO %%I;',v_new_table_name,v_old_table_name) AS t_rename_new_table,
-				format('ALTER TABLE sch_repnew.%%I SET SCHEMA %%I;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
-				format('DROP TABLE sch_repdrop.%%I CASCADE;',v_old_table_name,v_schema_name) AS t_change_new_tab_schema,
-				coalesce(vie.i_id_table=tab.i_id_table,false) b_views,
-				CASE	
-					WHEN vie.i_id_table IS NOT NULL
-					THEN
-						vie.t_change_schema
-				END AS t_change_view_schema,
-				CASE	
-					WHEN vie.i_id_table IS NOT NULL
-					THEN
-						vie.t_create_view
-				END AS t_create_view,
-				vie.v_view_name,
-				tab.v_schema_name,
-				tab.v_old_table_name,
-				tab.v_new_table_name
-
-				
-			FROM 
-				sch_repcloud.t_table_repack tab 
-				LEFT OUTER JOIN sch_repcloud.t_view_def vie
-					ON vie.i_id_table=tab.i_id_table
-			WHERE	
-						tab.v_schema_name=%s
-					AND tab.v_old_table_name=%s
-				;
-		"""
-		db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
-		table_swap = db_handler["cursor"].fetchall()
-		tswap = table_swap[0]
-		self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
-		db_handler["cursor"].execute(tswap[0])		
-		self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
-		db_handler["cursor"].execute(tswap[1])	
-		self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
-		db_handler["cursor"].execute(tswap[2])	
-		if  tswap[4]:
-			self.logger.log_message("table has views: %s" %tswap[4], 'debug')
-			for vswap in table_swap:
-				self.logger.log_message("change schema old view", 'debug')
-				db_handler["cursor"].execute(vswap[5])		
-				self.logger.log_message("create view on new table", 'debug')
-				db_handler["cursor"].execute(vswap[6])		
-		
-		#self.logger.log_message("drop old table: %s" %tswap[3], 'debug')
-		#db_handler["cursor"].execute(tswap[3])		
+	
 		
 		
 	def __repack_tables(self, con):
@@ -688,8 +634,8 @@ class pg_engine(object):
 			consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
 			if consistent_reachable:
 				self.__swap_tables(db_handler, table, con)
-			#else:
-			#	self.__remove_table_repack(db_handler, table, con)
+			else:
+				self.__remove_table_repack(db_handler, table, con)
 		self.__disconnect_db(db_handler)
 		
 	def __repack_loop(self, con):

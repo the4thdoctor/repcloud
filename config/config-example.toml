@@ -21,5 +21,8 @@ sslmode = "require"
 schemas = ['foo',]
 tables = ['foo.bar']
 #sets the maximum amount of rows to replay during the sync run
-max_replay_rows = "10000"
+max_replay_rows = "100000"
+#sets the maximum time to wait before wait for lock expires
 lock_timeout = "3s"
+#sets the time in seconds to wait for sampling the update rate on the repacked table
+check_time = "10"
