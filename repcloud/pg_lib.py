@@ -663,6 +663,11 @@ class pg_engine(object):
 
 	def repack_tables(self, connection, coname):
 		if coname == 'all':
+			self.logger.log_message('Repacking the tables for the defined connections'  'info')
 			for con in connection:
 				self.logger.log_message('Repacking the tables for connection %s' % con, 'info')
 				self.__repack_loop(con)
+		else:
+			self.logger.log_message('Repacking the tables for connection %s' % coname, 'info')
+			self.__repack_loop(coname)
+			
