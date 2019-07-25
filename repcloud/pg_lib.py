@@ -127,20 +127,23 @@ class pg_engine(object):
 		if len(schemas)>0:
 			filter.append((db_handler["cursor"].mogrify("v_schema = ANY(%s)",  (schemas, ))).decode())
 		if len(filter)>0:
-			sql_filter="WHERE %s" % " OR ".join(filter)
+			sql_filter="WHERE (%s)AND con.contype='p'" % " OR ".join(filter)
 			
 		sql_tab = """
 			SELECT 
-				format('%%I.%%I',v_schema,v_table),
-				v_schema,
-				v_table,
-				i_tab_size,
-				t_tab_size,
-				t_tab_wasted_bytes
+				format('%%I.%%I',tab.v_schema,tab.v_table),
+				tab.v_schema,
+				tab.v_table,
+				tab.i_tab_size,
+				tab.t_tab_size,
+				tab.t_tab_wasted_bytes
 			FROM 
-				sch_repcloud.v_tab_bloat
+				sch_repcloud.v_tab_bloat tab
+				INNER JOIN pg_constraint con 
+					ON con.conrelid=tab.o_tab_oid
 			%s
 			ORDER BY i_tab_wasted_bytes DESC
+
 		;""" % sql_filter
 		db_handler["cursor"].execute(sql_tab)
 		self.__tab_list = db_handler["cursor"].fetchall()
@@ -304,7 +307,7 @@ class pg_engine(object):
 		lock_timeout = self.connections[con]["lock_timeout"]
 		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
-		sql_lock_table = """LOCK TABLE "%s"."%s" in ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
+		sql_lock_table = """LOCK TABLE "%s"."%s" IN ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
 		sql_replay_data = """
 			SELECT sch_repcloud.fn_replay_change(%s,%s,%s);
 		"""
@@ -344,6 +347,19 @@ class pg_engine(object):
 					AND nt.v_old_table_name=%s
 			) setv 	
 			;
+
+		"""
+		
+		sql_lock_ref_tables = """
+			SELECT 
+				t_tab_lock,
+				v_schema_name,
+				v_referencing_table
+			FROM 
+				sch_repcloud.v_tab_ref_fkeys
+			WHERE 
+					v_referenced_schema_name=%s
+				AND	v_old_ref_table=%s
 
 		"""
 		sql_swap = """
@@ -407,6 +423,9 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
 		table_swap = db_handler["cursor"].fetchall()
 		sql_check_rows = sql_check_rows % table_swap[0][11]
+		db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
+		lock_referenced = db_handler["cursor"].fetchall()
+		sql_xid_stat = """ SELECT count(txid_status(i.x)) filter(where txid_status(i.x)<>'committed') FROM (SELECT unnest(%s::bigint[]) x) i; """
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
@@ -415,9 +434,29 @@ class pg_engine(object):
 			if try_swap:
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
 				db_handler["connection"].set_session(autocommit=False)
-				self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
+				"""
+				db_handler["cursor"].execute("SELECT txid_current_snapshot();")
+				txid_snap = db_handler["cursor"].fetchone()
+				txidlist = txid_snap[0].split(':')
+				db_handler["cursor"].execute(sql_xid_stat, (txidlist[2].split(','), ))
+				txid_status = db_handler["cursor"].fetchone()
 				
+				while txid_status[0]:
+					self.logger.log_message('Waiting for %s transactions to committ ' % (txid_status[0], ), 'info')
+					time.sleep(1)
+					db_handler["cursor"].execute("SELECT txid_current_snapshot();")
+					txid_snap = db_handler["cursor"].fetchone()
+					txidlist = txid_snap[0].split(':')
+					db_handler["cursor"].execute(sql_xid_stat, (txidlist[2].split(','), ))
+					txid_status = db_handler["cursor"].fetchone()
+				"""
 				try:
+					if len(lock_referenced)>0:
+						for reflock in lock_referenced:
+							self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (reflock[1], reflock[2] ), 'info')
+							db_handler["cursor"].execute(reflock[0])
+					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
+					
 					db_handler["cursor"].execute(sql_lock_table)
 					self.logger.log_message('Lock  acquired, checking if we still have a reasonable amount of rows to replay.',  'info')
 					db_handler["cursor"].execute(sql_check_rows,  (table[1], table[2],  ))
@@ -469,8 +508,13 @@ class pg_engine(object):
 						db_handler["connection"].commit()
 						
 				except psycopg2.Error as e:
-					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
-					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+					if e.pgcode == '40P01':
+						self.logger.log_message('Deadlock detected during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+					elif e.pgcode == '55P03':
+						self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+					else:
+						self.logger.log_message('An error occurred during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+						self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
 					db_handler["connection"].rollback()
 					try_swap  = False
 				except:

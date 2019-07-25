@@ -1081,12 +1081,15 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 
 
 
+
 CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 	SELECT 
 		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
 		format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_schema_name,v_referencing_table ,v_con_name) AS t_con_drop,
 		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_schema_name,v_referencing_table,v_con_name) AS t_con_validate,
+		format('LOCK TABLE  %I.%I IN ACCESS EXCLUSIVE MODE;',v_schema_name,v_referencing_table,v_con_name) AS t_tab_lock,
 		v_old_ref_table,
+		v_referenced_schema_name,
 		v_schema_name,
 		v_con_name,
 		v_new_ref_table,
@@ -1103,7 +1106,8 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 				sch.nspname as v_schema_name,
 				con.conname AS v_con_name,
 				rep.v_new_table_name AS v_new_ref_table,
-				rep.v_old_table_name AS v_old_ref_table
+				rep.v_old_table_name AS v_old_ref_table,
+				rep.v_schema_name AS v_referenced_schema_name
 			
 			FROM
 			pg_class tab
