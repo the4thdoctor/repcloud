@@ -451,12 +451,12 @@ class pg_engine(object):
 					txid_status = db_handler["cursor"].fetchone()
 				"""
 				try:
-					if len(lock_referenced)>0:
+					"""if len(lock_referenced)>0:
 						for reflock in lock_referenced:
 							self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (reflock[1], reflock[2] ), 'info')
 							db_handler["cursor"].execute(reflock[0])
+					"""
 					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
-					
 					db_handler["cursor"].execute(sql_lock_table)
 					self.logger.log_message('Lock  acquired, checking if we still have a reasonable amount of rows to replay.',  'info')
 					db_handler["cursor"].execute(sql_check_rows,  (table[1], table[2],  ))
@@ -500,7 +500,6 @@ class pg_engine(object):
 						db_handler["cursor"].execute(sql_drop_log_table)
 						self.logger.log_message("Dropping the old table", 'info')
 						db_handler["cursor"].execute(sql_drop_old_table)
-						
 						db_handler["connection"].commit()
 					else:
 						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
@@ -522,6 +521,7 @@ class pg_engine(object):
 					raise
 				db_handler["connection"].set_session(autocommit=True)
 				db_handler["cursor"].execute(sql_reset_lock_timeout )
+				self.__validate_fkeys(db_handler)
 				
 				
 		
@@ -629,9 +629,39 @@ class pg_engine(object):
 		for fkey in fk_list:
 			self.logger.log_message('Creating foreign  key %s on table %s. ' % (fkey[4],fkey[3],  ), 'info')
 			db_handler["cursor"].execute(fkey[0])		
-			self.logger.log_message('Dropping the foreign  key %s on old table %s. ' % (fkey[4],fkey[3],  ), 'info')
-			db_handler["cursor"].execute(fkey[1])		
-			
+			self.logger.log_message('Dropping the foreign key %s on old table %s. ' % (fkey[4],fkey[3],  ), 'info')
+			try:
+				db_handler["cursor"].execute(fkey[1])		
+			except psycopg2.Error as e:
+				if e.pgcode == '40P01':
+					self.logger.log_message('Deadlock detected during the drop of the foreign key %s on old table %s' % (fkey[4],fkey[3],  ), 'info')
+					if  db_handler["connection"].connected:
+						self.logger.log_message('The connection is still active, continuing.' , 'info')
+					else:
+						self.logger.log_message('The connection is no longer active, raising the error.' , 'info')
+						raise
+				
+	
+	def __validate_fkeys(self, db_handler):
+		"""
+			The methods tries to validate all  the foreign keys with not valid status
+		"""
+		sql_get_validate = """
+			SELECT 
+				t_con_validate,
+				v_con_name,
+				v_schema_name,
+				v_table_name
+			FROM 
+				sch_repcloud.v_fk_validate
+			l;		"""
+		db_handler["cursor"].execute(sql_get_validate)
+		validate_list = db_handler["cursor"].fetchall()
+		if len(validate_list)>0:
+			for validate_stat in validate_list:
+				self.logger.log_message('Validating the foreign key %s on table %s.%s.' % (validate_stat[1], validate_stat[2],validate_stat[3], ),   'info')
+				db_handler["cursor"].execute(validate_stat[0])
+		
 	def __create_ref_fkeys(self, db_handler, table):
 		"""
 		The method builds the referencing foreign keys from the existing  to the new table 
@@ -658,10 +688,26 @@ class pg_engine(object):
 		for fkey in fk_list:
 			self.logger.log_message("drop: %s" %fkey[0], 'debug')
 			self.logger.log_message("create: %s" %fkey[1], 'debug')
-			self.logger.log_message('Dropping the old  referencing foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
-			db_handler["cursor"].execute(fkey[0])		
-			self.logger.log_message('Creating foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
-			db_handler["cursor"].execute(fkey[1])		
+			try:
+				self.logger.log_message('Dropping the old  referencing foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
+				db_handler["cursor"].execute(fkey[0])		
+				self.logger.log_message('Creating foreign key %s on table %s. ' % (fkey[5],fkey[7],  ), 'info')
+				db_handler["cursor"].execute(fkey[1])		
+			except psycopg2.Error as e:
+				if e.pgcode == '40P01':
+					self.logger.log_message('Deadlock detected during the drop of the foreign key %s on the referencing table %s' % (fkey[4],fkey[7],  ), 'info')
+					if  db_handler["connection"].connected:
+						self.logger.log_message('The connection is still active, continuing.' , 'info')
+					else:
+						self.logger.log_message('The connection is no longer active, raising the error.' , 'info')
+						raise
+				else:
+					self.logger.log_message('An error occurred during the drop of the foreign key %s on the referencing table %s' % (fkey[4],fkey[7],  ), 'info')
+					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+			except:
+				self.logger.log_message('An generic error occurred during the drop of the foreign key %s on the referencing table %s' % (fkey[4],fkey[7],  ), 'info')
+				raise
+			
 	
 		
 		

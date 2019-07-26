@@ -1,2 +1,4 @@
 include config/config-example.toml
 include LICENSE.txt
+include repcloud/repack_lib.py
+include repcloud/pg_lib.py

@@ -1056,6 +1056,31 @@ FROM
 ) create_idx
 ;
 
+CREATE OR REPLACE VIEW v_fk_validate
+AS
+SELECT
+	format('ALTER TABLE %I.%I VALIDATE CONSTRAINT %I;',sch.nspname,tab.relname,con.conname) AS t_con_validate,
+	sch.nspname as v_schema_name,
+	con.conname AS v_con_name,
+	tab.relname AS v_table_name
+	
+
+FROM
+	pg_class tab
+	INNER JOIN pg_namespace sch
+		ON sch.oid=tab.relnamespace
+	INNER JOIN pg_constraint con
+		ON
+			con.connamespace=tab.relnamespace
+		AND	con.conrelid=tab.oid
+WHERE
+			con.contype in ('f')
+		AND NOT con.convalidated
+		
+;
+
+
+
 CREATE OR REPLACE VIEW v_tab_fkeys AS
 	SELECT DISTINCT
 		format('ALTER TABLE ONLY sch_repnew.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,

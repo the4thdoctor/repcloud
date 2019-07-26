@@ -73,6 +73,8 @@ setup(
 	],
 	py_modules=[
 		"repcloud.__init__",
+		"repcloud.repack_lib",
+		"repcloud.pg_lib",
 	],
 	scripts=[
 		"scripts/rpcl.py", 
