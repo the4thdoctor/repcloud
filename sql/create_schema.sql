@@ -138,6 +138,7 @@ BEGIN
 					tab.v_schema_name=p_t_schema
 				AND	tab.v_old_table_name=p_t_table
 				AND att.attnum>0
+				AND NOT att.attisdropped
 				
 		) tab
 		GROUP BY
@@ -523,6 +524,7 @@ BEGIN
 			WHERE 
 					tab.v_old_table_name=p_t_table
 				AND	tab.v_schema_name=p_t_schema
+				AND coalesce(idx.v_contype,'p')='p'
 				
 		ON CONFLICT DO NOTHING
 		;
