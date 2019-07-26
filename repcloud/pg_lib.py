@@ -539,9 +539,10 @@ class pg_engine(object):
 			WHERE 
 					v_schema_name=%s
 				AND v_old_table_name=%s
-				AND v_contype<>'p'
+				AND v_contype IS NULL
 			;
 		"""
+		self.logger.log_message('Determining whether we need to create new indices on on table %s.%s. ' % (table[1], table[2],  ), 'info')
 		db_handler["cursor"].execute(sql_get_idx,  (table[1], table[2], ))
 		idx_list = db_handler["cursor"].fetchall()
 		for index in idx_list:
@@ -552,7 +553,7 @@ class pg_engine(object):
 		"""
 			The method copy the data from the origin's table to the new one
 		"""
-		self.logger.log_message('Creating the logger triggers on the table %s.%s' % (table[1], table[0],  ), 'info')
+		self.logger.log_message('Creating the logger triggers on the table %s.%s' % (table[1], table[2],  ), 'info')
 		
 		sql_create_data_trigger = """
 			
