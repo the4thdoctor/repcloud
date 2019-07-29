@@ -153,6 +153,32 @@ class pg_engine(object):
 		self.__tab_list = db_handler["cursor"].fetchall()
 		self.__disconnect_db(db_handler)
 	
+	def __check_repack_step(self, db_handler, table):
+		"""
+			The method retrieves the repack status for the given table.
+
+		"""
+		sql_get_status = """
+			SELECT 
+				coalesce(en_repack_step,'complete'),
+				i_id_table
+			FROM
+				sch_repcloud.t_table_repack
+			WHERE
+					v_schema_name=%s
+				AND v_old_table_name=%s 
+		;	
+		"""
+		db_handler["cursor"].execute(sql_get_status,  (table[1], table[2], ))
+		rep_step = db_handler["cursor"].fetchone()
+		if rep_step:
+			rep_status = rep_step[0] 
+			self.__id_table = rep_step[1] 
+		else:
+			rep_status = 'complete'
+		return rep_status
+		
+	
 	def __update_repack_status(self, db_handler, repack_step):
 		"""
 			The method updates the repack status for the processed table
@@ -748,21 +774,24 @@ class pg_engine(object):
 	def __repack_tables(self, con):
 		"""
 			The method executes the repack operation for each table in self.tab_list
+			self.__repack_list = [ 'create table','copy', 'create pkeys','create index', 'replay','swap tables','swap aborted','validate','complete' ]
 		"""
 		db_handler = self.__connect_db(self.connections[con])
 		for table in self.__tab_list:
-			self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
-			self.__create_new_table(db_handler, table)
-			self.__copy_table_data(db_handler, table)
-			self.__create_pkey(db_handler, table)
-			self.__create_indices(db_handler, table)
-			consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
-			if consistent_reachable:
-				self.__swap_tables(db_handler, table, con)
-				self.__update_repack_status(db_handler, 8)
-			else:
-				self.__remove_table_repack(db_handler, table, con)
-				self.__update_repack_status(db_handler, 6)
+			rep_status = self.__check_repack_step(db_handler, table)
+			if rep_status == self.__repack_list[8]: 
+				self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
+				self.__create_new_table(db_handler, table)
+				self.__copy_table_data(db_handler, table)
+				self.__create_pkey(db_handler, table)
+				self.__create_indices(db_handler, table)
+				consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
+				if consistent_reachable:
+					self.__swap_tables(db_handler, table, con)
+					self.__update_repack_status(db_handler, 8)
+				else:
+					self.__remove_table_repack(db_handler, table, con)
+					self.__update_repack_status(db_handler, 6)
 		self.__disconnect_db(db_handler)
 		
 	def __repack_loop(self, con):
