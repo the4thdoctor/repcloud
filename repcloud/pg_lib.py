@@ -16,7 +16,7 @@ class pg_engine(object):
 		self.__id_table = None
 		# repack_step 0 to 8, each step may be resumed
 		self.__repack_list = [ 'create table','copy', 'create pkeys','create index', 'replay','swap tables','swap aborted','validate','complete' ]
-		
+		self.__application_name = "repcloud - Table: %s [%s] "
 	def __check_replica_schema(self, db_handler):
 		"""
 		The method checks if the sch_chameleon exists
@@ -166,9 +166,14 @@ class pg_engine(object):
 					en_repack_step=%s
 			WHERE
 				i_id_table=%s
+			RETURNING v_old_table_name
+		;
 		"""
+		sql_app_name = """SET application_name = %s;""" 
 		db_handler["cursor"].execute(sql_update_step,  (self.__repack_list[repack_step], self.__id_table, ))
-	
+		tab_rep = db_handler["cursor"].fetchone()
+		app_name = self.__application_name % (tab_rep[0], self.__repack_list[repack_step], )
+		db_handler["cursor"].execute(sql_app_name,  (app_name, ))
 	def __create_new_table(self, db_handler, table):
 		"""
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
