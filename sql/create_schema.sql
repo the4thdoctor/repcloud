@@ -65,21 +65,6 @@ CREATE TABLE sch_repcloud.t_view_def (
 );
 
 
-CREATE TABLE IF NOT EXISTS sch_repcloud.t_log_replay
-(
-	i_action_id bigserial ,
-	i_xid_action bigint NOT NULL,
-	oid_old_tab_oid bigint NOT NULL,
-	v_action character varying(20) NOT NULL,
-	jb_new_data jsonb ,
-	jb_old_data jsonb ,
-	ts_action timestamp with time zone NOT NULL DEFAULT clock_timestamp()
-
-);
-ALTER TABLE sch_repcloud.t_log_replay ADD CONSTRAINT pk_t_log_replay PRIMARY KEY (i_action_id);
-CREATE INDEX  idx_xid_action_t_log_replay ON sch_repcloud.t_log_replay  USING btree(i_xid_action);	
-CREATE INDEX  idx_oid_old_tab_oid_t_log_replay ON sch_repcloud.t_log_replay  USING btree(oid_old_tab_oid);
-
 -- functions
 
 
@@ -290,7 +275,8 @@ BEGIN
 			ARRAY[
 				v_log_table_name,
 				v_schema_name,
-				v_old_table_name
+				v_old_table_name,
+				oid_old_table::text
 
 				]
 		FROM 
@@ -311,18 +297,21 @@ BEGIN
 			ts_action timestamp with time zone NOT NULL DEFAULT clock_timestamp()
 		
 		);
-		ALTER TABLE sch_repnew.%I ADD CONSTRAINT pk_t_log_replay PRIMARY KEY (i_action_id);
-		CREATE INDEX  idx_xid_action_t_log_replay_test ON sch_repnew.%I  USING btree(i_xid_action);	
-		CREATE INDEX  idx_oid_old_tab_oid_t_log_replay_test ON sch_repnew.%I  USING btree(oid_old_tab_oid);
+		ALTER TABLE sch_repnew.%I ADD CONSTRAINT pk_t_log_replay_%s PRIMARY KEY (i_action_id);
+		CREATE INDEX  idx_xid_action_%s ON sch_repnew.%I  USING btree(i_xid_action);	
+		CREATE INDEX  idx_oid_old_tab_oid_%s ON sch_repnew.%I  USING btree(oid_old_tab_oid);
 	',
-	v_t_log[1],
-	v_t_log[2],	
-	v_t_log[3],
-	v_t_log[2],	
-	v_t_log[3],
-	v_t_log[1],
-	v_t_log[1],
-	v_t_log[1]
+	v_t_log[1], --logtable
+	v_t_log[2],	--schema type
+	v_t_log[3], --table type
+	v_t_log[2],	--schema type
+	v_t_log[3], --table type
+	v_t_log[1], --logtable
+	v_t_log[4], --oid_table
+	v_t_log[4], --oid_table
+	v_t_log[1], --logtable
+	v_t_log[4], --oid_table
+	v_t_log[1]  --logtable
 
 	);
 	EXECUTE v_t_sql_create;
@@ -1103,7 +1092,8 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 		INNER JOIN sch_repcloud.t_table_repack rep
 			ON tab.oid=rep.oid_old_table 
 	WHERE
-		con.contype in ('f')
+			con.contype in ('f')
+		AND con.confrelid<>con.conrelid
 ;
 
 
@@ -1111,16 +1101,22 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 
 CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 	SELECT 
-		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
-		format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_schema_name,v_referencing_table ,v_con_name) AS t_con_drop,
-		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_schema_name,v_referencing_table,v_con_name) AS t_con_validate,
-		format('LOCK TABLE  %I.%I IN ACCESS EXCLUSIVE MODE;',v_schema_name,v_referencing_table,v_con_name) AS t_tab_lock,
+		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_ref_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
+		CASE WHEN b_self_referencing
+		THEN
+			'SELECT True;'
+		ELSE
+			format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table ,v_con_name) 
+		END AS t_con_drop,
+		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_con_validate,
+		format('LOCK TABLE  %I.%I IN ACCESS EXCLUSIVE MODE;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_tab_lock,
 		v_old_ref_table,
 		v_referenced_schema_name,
 		v_schema_name,
 		v_con_name,
 		v_new_ref_table,
-		v_referencing_table
+		v_referencing_table,
+		v_ref_schema_name
 	FROM
 		(
 			SELECT 
@@ -1129,12 +1125,26 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 					pg_get_constraintdef(con.oid),
 					'(FOREIGN KEY\s*\(.*?\)\s*REFERENCES)\s*(.*)(\(.*)'
 				) AS t_con_token,
-				tabr.relname as v_referencing_table,
-				sch.nspname as v_schema_name,
+				CASE
+					WHEN con.conrelid=con.confrelid
+					THEN 
+						rep.v_new_table_name
+					ELSE 
+						tabr.relname
+				END AS v_referencing_table,
+				CASE
+					WHEN con.conrelid=con.confrelid
+					THEN 
+						'sch_repnew'
+					ELSE 
+						sch.nspname
+				END AS v_ref_schema_name,
+				sch.nspname AS v_schema_name,
 				con.conname AS v_con_name,
 				rep.v_new_table_name AS v_new_ref_table,
 				rep.v_old_table_name AS v_old_ref_table,
-				rep.v_schema_name AS v_referenced_schema_name
+				rep.v_schema_name AS v_referenced_schema_name,
+				con.conrelid=con.confrelid AS b_self_referencing
 			
 			FROM
 			pg_class tab
@@ -1149,7 +1159,8 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 			INNER JOIN pg_class tabr
 				ON  con.conrelid=tabr.oid
 				WHERE
-					con.contype in ('f')
+						con.contype in ('f')
+					
 		) con
 ;
 

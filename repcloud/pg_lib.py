@@ -424,8 +424,6 @@ class pg_engine(object):
 		table_swap = db_handler["cursor"].fetchall()
 		sql_check_rows = sql_check_rows % table_swap[0][11]
 		db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
-		lock_referenced = db_handler["cursor"].fetchall()
-		sql_xid_stat = """ SELECT count(txid_status(i.x)) filter(where txid_status(i.x)<>'committed') FROM (SELECT unnest(%s::bigint[]) x) i; """
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
