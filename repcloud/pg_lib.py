@@ -13,6 +13,10 @@ class pg_engine(object):
 		self.sql_dir = "%s/repcloud/sql/" % python_lib
 		self.connections = None
 		self.__tab_list = None
+		self.__id_table = None
+		# repack_step 0 to 8, each step may be resumed
+		self.__repack_list = [ 'create table','copy', 'create pkeys','create index', 'replay','swap tables','swap aborted','validate','complete' ]
+		
 	def __check_replica_schema(self, db_handler):
 		"""
 		The method checks if the sch_chameleon exists
@@ -149,6 +153,22 @@ class pg_engine(object):
 		self.__tab_list = db_handler["cursor"].fetchall()
 		self.__disconnect_db(db_handler)
 	
+	def __update_repack_status(self, db_handler, repack_step):
+		"""
+			The method updates the repack status for the processed table
+			allowed values range from 0 to 8, each step may be resumed
+			the list order is :
+				[ "create table","copy", "create pkeys","create index", "replay","swap tables","swap aborted","validate","complete" ] 
+		"""
+		sql_update_step = """
+			UPDATE sch_repcloud.t_table_repack
+				SET 	
+					en_repack_step=%s
+			WHERE
+				i_id_table=%s
+		"""
+		db_handler["cursor"].execute(sql_update_step,  (self.__repack_list[repack_step], self.__id_table, ))
+	
 	def __create_new_table(self, db_handler, table):
 		"""
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
@@ -157,7 +177,10 @@ class pg_engine(object):
 		sql_create_log = """SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
 		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
 		db_handler["cursor"].execute(sql_create_new,  (table[1], table[2], ))
+		tab_create = db_handler["cursor"].fetchone()
+		self.__id_table = tab_create[0]
 		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
+		self.__update_repack_status(db_handler, 0)
 		db_handler["cursor"].execute(sql_create_log,  (table[1], table[2], ))
 		
 	def __create_pkey(self, db_handler, table):
@@ -179,6 +202,7 @@ class pg_engine(object):
 		"""
 		db_handler["cursor"].execute(sql_get_pk,  (table[1], table[2], ))
 		pkey = db_handler["cursor"].fetchone()
+		self.__update_repack_status(db_handler, 2)
 		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[1],pkey[2],  ), 'info')
 		db_handler["cursor"].execute(pkey[0])
 
@@ -424,12 +448,14 @@ class pg_engine(object):
 		table_swap = db_handler["cursor"].fetchall()
 		sql_check_rows = sql_check_rows % table_swap[0][11]
 		db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
+		self.__update_repack_status(db_handler, 4)
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
 			last_replay = db_handler["cursor"].fetchone()
 			try_swap = int(last_replay[0])<int(max_replay_rows)
 			if try_swap:
+				self.__update_repack_status(db_handler, 5)
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
 				db_handler["connection"].set_session(autocommit=False)
 				"""
@@ -499,10 +525,12 @@ class pg_engine(object):
 						self.logger.log_message("Dropping the old table", 'info')
 						db_handler["cursor"].execute(sql_drop_old_table)
 						db_handler["connection"].commit()
+						
 					else:
 						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
 						continue_replay = True
 						db_handler["connection"].commit()
+						self.__update_repack_status(db_handler, 4)
 						
 				except psycopg2.Error as e:
 					if e.pgcode == '40P01':
@@ -512,7 +540,14 @@ class pg_engine(object):
 					else:
 						self.logger.log_message('An error occurred during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
 						self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
-					db_handler["connection"].rollback()
+					if  db_handler["connection"].closed:
+						self.logger.log_message('The connection is no longer active, trying to reconnect.' , 'info')
+						db_handler = self.__connect_db(self.connections[con])
+						self.__remove_table_repack(db_handler, table, con)
+					else:
+						self.logger.log_message('The connection is still active, continuing.' , 'info')
+						db_handler["connection"].rollback()
+						continue_replay = True
 					try_swap  = False
 				except:
 					try_swap  = False
@@ -540,6 +575,7 @@ class pg_engine(object):
 				AND v_contype IS NULL
 			;
 		"""
+		self.__update_repack_status(db_handler, 3)
 		self.logger.log_message('Determining whether we need to create new indices on on table %s.%s. ' % (table[1], table[2],  ), 'info')
 		db_handler["cursor"].execute(sql_get_idx,  (table[1], table[2], ))
 		idx_list = db_handler["cursor"].fetchall()
@@ -552,7 +588,7 @@ class pg_engine(object):
 			The method copy the data from the origin's table to the new one
 		"""
 		self.logger.log_message('Creating the logger triggers on the table %s.%s' % (table[1], table[2],  ), 'info')
-		
+		self.__update_repack_status(db_handler, 1)
 		sql_create_data_trigger = """
 			
 		CREATE TRIGGER z_repcloud_log
@@ -634,17 +670,14 @@ class pg_engine(object):
 			except psycopg2.Error as e:
 				if e.pgcode == '40P01':
 					self.logger.log_message('Deadlock detected during the drop of the foreign key %s on old table %s' % (fkey[4],fkey[3],  ), 'info')
-					if  db_handler["connection"].connected:
-						self.logger.log_message('The connection is still active, continuing.' , 'info')
-					else:
-						self.logger.log_message('The connection is no longer active, raising the error.' , 'info')
-						raise
-				
+					raise
+					
 	
 	def __validate_fkeys(self, db_handler):
 		"""
 			The methods tries to validate all  the foreign keys with not valid status
 		"""
+		self.__update_repack_status(db_handler, 7)
 		sql_get_validate = """
 			SELECT 
 				t_con_validate,
@@ -695,14 +728,11 @@ class pg_engine(object):
 			except psycopg2.Error as e:
 				if e.pgcode == '40P01':
 					self.logger.log_message('Deadlock detected during the drop of the foreign key %s on the referencing table %s' % (fkey[4],fkey[7],  ), 'info')
-					if  db_handler["connection"].connected:
-						self.logger.log_message('The connection is still active, continuing.' , 'info')
-					else:
-						self.logger.log_message('The connection is no longer active, raising the error.' , 'info')
-						raise
+					raise
 				else:
 					self.logger.log_message('An error occurred during the drop of the foreign key %s on the referencing table %s' % (fkey[4],fkey[7],  ), 'info')
 					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+					raise
 			except:
 				self.logger.log_message('An generic error occurred during the drop of the foreign key %s on the referencing table %s' % (fkey[4],fkey[7],  ), 'info')
 				raise
@@ -724,8 +754,10 @@ class pg_engine(object):
 			consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
 			if consistent_reachable:
 				self.__swap_tables(db_handler, table, con)
+				self.__update_repack_status(db_handler, 8)
 			else:
 				self.__remove_table_repack(db_handler, table, con)
+				self.__update_repack_status(db_handler, 6)
 		self.__disconnect_db(db_handler)
 		
 	def __repack_loop(self, con):

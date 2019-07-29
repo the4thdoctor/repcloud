@@ -4,6 +4,12 @@ CREATE SCHEMA IF NOT EXISTS sch_repdrop;
 CREATE SCHEMA IF NOT EXISTS sch_repnew;
 
 SET search_path=sch_repcloud;
+
+-- types 
+CREATE TYPE ty_repack_step
+	AS ENUM ('create table','copy', 'create pkeys','create index', 'replay','swap tables','swap aborted','validate','complete');
+
+
 --VIEWS
 CREATE OR REPLACE VIEW v_version 
  AS
@@ -24,7 +30,7 @@ CREATE TABLE t_table_repack
 	v_log_table_name  character varying(100) NOT NULL,
 	v_schema_name character varying(100) NOT NULL,
 	t_tab_pk text[],
-	v_repack_step character varying(100),
+	en_repack_step ty_repack_step,
 	v_status  character varying(100) ,
 	i_size_start bigint,
 	i_size_end bigint,
@@ -321,7 +327,7 @@ LANGUAGE plpgsql
 ;
 
 CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_repack_table(text,text) 
-RETURNS VOID as 
+RETURNS bigint as 
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
@@ -460,6 +466,9 @@ BEGIN
 	WHERE oid_old_table=keydat.oid_conrelid
 		;
 
+	DELETE FROM sch_repcloud.t_view_def
+	WHERE i_id_table=v_i_id_table;
+	
 	INSERT INTO sch_repcloud.t_view_def
 		(
 			i_id_table,
@@ -480,7 +489,11 @@ BEGIN
 		refobjid=v_oid_old_table
 	;
 		
-		
+	DELETE FROM sch_repcloud.t_idx_repack
+	WHERE 
+			i_id_table=v_i_id_table
+	;
+
 	INSERT INTO sch_repcloud.t_idx_repack
 			(
 				i_id_table,
@@ -511,14 +524,13 @@ BEGIN
 						tab.v_old_table_name=idx.v_table
 					AND	tab.v_schema_name=idx.v_schema
 			WHERE 
-					tab.v_old_table_name=p_t_table
-				AND	tab.v_schema_name=p_t_schema
+					tab.i_id_table=v_i_id_table
 				AND coalesce(idx.v_contype,'p')='p'
 				
 		ON CONFLICT DO NOTHING
 		;
 
-	
+	RETURN	v_i_id_table;
 END
 $BODY$
 LANGUAGE plpgsql 
