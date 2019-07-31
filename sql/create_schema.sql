@@ -7,7 +7,7 @@ SET search_path=sch_repcloud;
 
 -- types 
 CREATE TYPE ty_repack_step
-	AS ENUM ('create table','copy', 'create pkeys','create index', 'replay','swap tables','swap aborted','validate','complete');
+	AS ENUM ('create table','copy', 'create pkey','create indices', 'replay', 'swap tables','swap aborted','validate','complete');
 
 
 --VIEWS

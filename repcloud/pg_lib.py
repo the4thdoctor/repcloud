@@ -15,7 +15,7 @@ class pg_engine(object):
 		self.__tab_list = None
 		self.__id_table = None
 		# repack_step 0 to 8, each step may be resumed
-		self.__repack_list = [ 'create table','copy', 'create pkeys','create index', 'replay','swap tables','swap aborted','validate','complete' ]
+		self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
 		self.__application_name = "repcloud - Table: %s [%s] "
 	def __check_replica_schema(self, db_handler):
 		"""
@@ -161,7 +161,8 @@ class pg_engine(object):
 		sql_get_status = """
 			SELECT 
 				coalesce(en_repack_step,'complete'),
-				i_id_table
+				i_id_table,
+				coalesce(v_status,'complete')
 			FROM
 				sch_repcloud.t_table_repack
 			WHERE
@@ -172,14 +173,14 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_get_status,  (table[1], table[2], ))
 		rep_step = db_handler["cursor"].fetchone()
 		if rep_step:
-			rep_status = rep_step[0] 
+			rep_status = (rep_step[0], rep_step[2],self.__repack_list.index(rep_step[0]) )
 			self.__id_table = rep_step[1] 
 		else:
-			rep_status = 'complete'
+			rep_status = ('complete', 'complete', self.__repack_list.index('complete') )
 		return rep_status
 		
 	
-	def __update_repack_status(self, db_handler, repack_step):
+	def __update_repack_status(self, db_handler, repack_step, status="in progress"):
 		"""
 			The method updates the repack status for the processed table
 			allowed values range from 0 to 8, each step may be resumed
@@ -189,17 +190,19 @@ class pg_engine(object):
 		sql_update_step = """
 			UPDATE sch_repcloud.t_table_repack
 				SET 	
-					en_repack_step=%s
+					en_repack_step=%s,
+					v_status=%s
 			WHERE
 				i_id_table=%s
 			RETURNING v_old_table_name
 		;
 		"""
 		sql_app_name = """SET application_name = %s;""" 
-		db_handler["cursor"].execute(sql_update_step,  (self.__repack_list[repack_step], self.__id_table, ))
+		db_handler["cursor"].execute(sql_update_step,  (self.__repack_list[repack_step], status, self.__id_table, ))
 		tab_rep = db_handler["cursor"].fetchone()
 		app_name = self.__application_name % (tab_rep[0], self.__repack_list[repack_step], )
 		db_handler["cursor"].execute(sql_app_name,  (app_name, ))
+		
 	def __create_new_table(self, db_handler, table):
 		"""
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
@@ -211,8 +214,9 @@ class pg_engine(object):
 		tab_create = db_handler["cursor"].fetchone()
 		self.__id_table = tab_create[0]
 		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
-		self.__update_repack_status(db_handler, 0)
+		self.__update_repack_status(db_handler, 0, "in progress")
 		db_handler["cursor"].execute(sql_create_log,  (table[1], table[2], ))
+		self.__update_repack_status(db_handler, 0, "complete")
 		
 	def __create_pkey(self, db_handler, table):
 		"""
@@ -233,9 +237,11 @@ class pg_engine(object):
 		"""
 		db_handler["cursor"].execute(sql_get_pk,  (table[1], table[2], ))
 		pkey = db_handler["cursor"].fetchone()
-		self.__update_repack_status(db_handler, 2)
-		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[1],pkey[2],  ), 'info')
+		self.__update_repack_status(db_handler, 2, "in progress")
+		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[2],pkey[1],  ), 'info')
 		db_handler["cursor"].execute(pkey[0])
+		self.__update_repack_status(db_handler, 2, "complete")
+		
 
 	def __remove_table_repack(self, db_handler, table, con):
 		"""
@@ -479,14 +485,14 @@ class pg_engine(object):
 		table_swap = db_handler["cursor"].fetchall()
 		sql_check_rows = sql_check_rows % table_swap[0][11]
 		db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
-		self.__update_repack_status(db_handler, 4)
+		self.__update_repack_status(db_handler, 4, "in progress")
 		while continue_replay :
 			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
 			last_replay = db_handler["cursor"].fetchone()
 			try_swap = int(last_replay[0])<int(max_replay_rows)
 			if try_swap:
-				self.__update_repack_status(db_handler, 5)
+				self.__update_repack_status(db_handler, 5, "in progress")
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
 				db_handler["connection"].set_session(autocommit=False)
 				"""
@@ -561,7 +567,7 @@ class pg_engine(object):
 						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
 						continue_replay = True
 						db_handler["connection"].commit()
-						self.__update_repack_status(db_handler, 4)
+						self.__update_repack_status(db_handler, 4,  "in progress")
 						
 				except psycopg2.Error as e:
 					if e.pgcode == '40P01':
@@ -575,17 +581,19 @@ class pg_engine(object):
 						self.logger.log_message('The connection is no longer active, trying to reconnect.' , 'info')
 						db_handler = self.__connect_db(self.connections[con])
 						self.__remove_table_repack(db_handler, table, con)
+						self.__update_repack_status(db_handler, 5, "failed")
 					else:
 						self.logger.log_message('The connection is still active, continuing.' , 'info')
 						db_handler["connection"].rollback()
 						continue_replay = True
+						self.__update_repack_status(db_handler, 4,  "in progress")
 					try_swap  = False
 				except:
 					try_swap  = False
 					raise
 				db_handler["connection"].set_session(autocommit=True)
 				db_handler["cursor"].execute(sql_reset_lock_timeout )
-				self.__validate_fkeys(db_handler)
+				self.__update_repack_status(db_handler, 5, "complete")
 				
 				
 		
@@ -606,20 +614,21 @@ class pg_engine(object):
 				AND v_contype IS NULL
 			;
 		"""
-		self.__update_repack_status(db_handler, 3)
+		self.__update_repack_status(db_handler, 3, "in progress")
 		self.logger.log_message('Determining whether we need to create new indices on on table %s.%s. ' % (table[1], table[2],  ), 'info')
 		db_handler["cursor"].execute(sql_get_idx,  (table[1], table[2], ))
 		idx_list = db_handler["cursor"].fetchall()
 		for index in idx_list:
 			self.logger.log_message('Creating index %s on table %s. ' % (index[1],index[2],  ), 'info')
 			db_handler["cursor"].execute(index[0])
-			
+		self.__update_repack_status(db_handler, 3, "complete")
+		
 	def __copy_table_data(self, db_handler, table):
 		"""
 			The method copy the data from the origin's table to the new one
 		"""
 		self.logger.log_message('Creating the logger triggers on the table %s.%s' % (table[1], table[2],  ), 'info')
-		self.__update_repack_status(db_handler, 1)
+		self.__update_repack_status(db_handler, 1, "in progress")
 		sql_create_data_trigger = """
 			
 		CREATE TRIGGER z_repcloud_log
@@ -669,7 +678,7 @@ class pg_engine(object):
 		db_handler["connection"].commit()
 		db_handler["connection"].set_session(autocommit=True)
 		db_handler["cursor"].execute(sql_analyze)
-		
+		self.__update_repack_status(db_handler, 1, "complete")
 		
 	
 	def __create_tab_fkeys(self, db_handler, table):
@@ -708,7 +717,7 @@ class pg_engine(object):
 		"""
 			The methods tries to validate all  the foreign keys with not valid status
 		"""
-		self.__update_repack_status(db_handler, 7)
+		self.__update_repack_status(db_handler, 7, "in progress")
 		sql_get_validate = """
 			SELECT 
 				t_con_validate,
@@ -724,7 +733,7 @@ class pg_engine(object):
 			for validate_stat in validate_list:
 				self.logger.log_message('Validating the foreign key %s on table %s.%s.' % (validate_stat[1], validate_stat[2],validate_stat[3], ),   'info')
 				db_handler["cursor"].execute(validate_stat[0])
-		
+		self.__update_repack_status(db_handler, 7, "complete")
 	def __create_ref_fkeys(self, db_handler, table):
 		"""
 		The method builds the referencing foreign keys from the existing  to the new table 
@@ -774,24 +783,39 @@ class pg_engine(object):
 	def __repack_tables(self, con):
 		"""
 			The method executes the repack operation for each table in self.tab_list
-			self.__repack_list = [ 'create table','copy', 'create pkeys','create index', 'replay','swap tables','swap aborted','validate','complete' ]
+			self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
 		"""
 		db_handler = self.__connect_db(self.connections[con])
 		for table in self.__tab_list:
 			rep_status = self.__check_repack_step(db_handler, table)
-			if rep_status == self.__repack_list[8]: 
-				self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
-				self.__create_new_table(db_handler, table)
-				self.__copy_table_data(db_handler, table)
-				self.__create_pkey(db_handler, table)
-				self.__create_indices(db_handler, table)
-				consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
-				if consistent_reachable:
-					self.__swap_tables(db_handler, table, con)
-					self.__update_repack_status(db_handler, 8)
-				else:
-					self.__remove_table_repack(db_handler, table, con)
-					self.__update_repack_status(db_handler, 6)
+			if rep_status[1] == "complete":
+				print(rep_status[2])
+				if rep_status[2] == 8:
+					self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
+					self.__create_new_table(db_handler, table)
+					rep_status = self.__check_repack_step(db_handler, table)
+				if rep_status[2] == 0:
+					self.__copy_table_data(db_handler, table)
+					rep_status = self.__check_repack_step(db_handler, table)
+				if rep_status[2] < 2:
+					self.__create_pkey(db_handler, table)
+					rep_status = self.__check_repack_step(db_handler, table)
+				if  rep_status[2] < 3:
+					self.__create_indices(db_handler, table)
+					rep_status = self.__check_repack_step(db_handler, table)
+				if rep_status[2] < 5:
+					consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
+					if consistent_reachable:
+						self.__swap_tables(db_handler, table, con)
+						rep_status = self.__check_repack_step(db_handler, table)
+					else:
+						self.__remove_table_repack(db_handler, table, con)
+						self.__update_repack_status(db_handler, 6, "failed")
+						break
+				self.__validate_fkeys(db_handler)
+				self.__update_repack_status(db_handler, 8, "complete")
+			else: 
+				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
 		self.__disconnect_db(db_handler)
 		
 	def __repack_loop(self, con):
