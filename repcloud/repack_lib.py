@@ -213,7 +213,14 @@ class repack_engine():
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
-		
+	
+	def prepare_repack(self):
+		"""
+		The method performs the repack 
+		"""
+		self.__check_connections()
+		self.pg_engine.connections = self.config["connections"]
+		self.pg_engine.prepare_repack(self.connection, self.args.connection )
 	def create_schema(self):
 		"""
 		The method creates the repack schema for the target connection.

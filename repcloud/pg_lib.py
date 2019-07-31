@@ -778,7 +778,30 @@ class pg_engine(object):
 				raise
 			
 	
-		
+	def __prepare_repack(self, con):
+		"""
+			The method executes the preparation for repack for each table in self.tab_list
+			self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
+		"""
+		db_handler = self.__connect_db(self.connections[con])
+		for table in self.__tab_list:
+			rep_status = self.__check_repack_step(db_handler, table)
+			if rep_status[1] == "complete":
+				if rep_status[2] == 8:
+					self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
+					self.__create_new_table(db_handler, table)
+					rep_status = self.__check_repack_step(db_handler, table)
+				if rep_status[2] == 0:
+					self.__copy_table_data(db_handler, table)
+					rep_status = self.__check_repack_step(db_handler, table)
+				if rep_status[2] < 2:
+					self.__create_pkey(db_handler, table)
+					rep_status = self.__check_repack_step(db_handler, table)
+				if  rep_status[2] < 3:
+					self.__create_indices(db_handler, table)
+			else: 
+				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
+		self.__disconnect_db(db_handler)
 		
 	def __repack_tables(self, con):
 		"""
@@ -818,13 +841,15 @@ class pg_engine(object):
 				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
 		self.__disconnect_db(db_handler)
 		
-	def __repack_loop(self, con):
+	def __repack_loop(self, con, action='repack'):
 		"""
 		The method loops trough the tables available for the connection
 		"""
 		self.__get_repack_tables(con)
-		self.__repack_tables(con)
-
+		if action == 'repack':
+			self.__repack_tables(con)
+		if action == 'prepare':
+			self.__prepare_repack(con)
 	def drop_repack_schema(self, connection, coname):
 		"""
 			The method runs the __create_repack_schema method for the given connection or 
@@ -842,7 +867,7 @@ class pg_engine(object):
 
 	def repack_tables(self, connection, coname):
 		if coname == 'all':
-			self.logger.log_message('Repacking the tables for the defined connections'  'info')
+			self.logger.log_message('Repacking the tables for the available  connections'  'info')
 			for con in connection:
 				self.logger.log_message('Repacking the tables for connection %s' % con, 'info')
 				self.__repack_loop(con)
@@ -850,3 +875,14 @@ class pg_engine(object):
 			self.logger.log_message('Repacking the tables for connection %s' % coname, 'info')
 			self.__repack_loop(coname)
 			
+
+	def prepare_repack(self, connection, coname):
+		if coname == 'all':
+			self.logger.log_message('Preparing the repack for all the tables in the available connections'  'info')
+			for con in connection:
+				self.logger.log_message('Preparing the repack for all the tables defined in the connection %s' % con, 'info')
+				self.__repack_loop(con, 'prepare')
+		else:
+			self.logger.log_message('Preparing the repack for all the tables in connection %s' % coname, 'info')
+			self.__repack_loop(coname, 'prepare')
+	
