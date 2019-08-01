@@ -1,3 +1,6 @@
+#where to create the daemon's pid
+pid_dir = "~/repcloud/pid"
+
 [logging]
 #where to store the logs
 log_dir = "~/.repcloud/logs"

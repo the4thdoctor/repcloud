@@ -16,13 +16,12 @@ class rep_notifier():
 		Class constructor for the notifier facility
 		"""
 		self.args = args 
-		self.__init_emailer()
-		print(self.args["enable_email"])
 	def __init_emailer(self):
 		"""
 			The method initialise the emailer if any configuration is present
 		"""
 		if "email" in self.args:
+			self.logger.log_message('Initialising emailer' , 'info')
 			emailconf = self.args["email"]
 			self.emailer = smtplib.SMTP(host=emailconf["smtp_server"], port=emailconf["smtp_port"])
 			if emailconf["smtp_ssl"] == "starttls":
@@ -41,10 +40,12 @@ class rep_notifier():
 			The method sends the email with the given subject to the list of emails configured in notifier.email
 		"""
 		if "email" in self.args:
+			self.__init_emailer()
 			emailconf = self.args["email"]
 			self.emailer.login(emailconf["smtp_username"], emailconf["smtp_password"])
 			msg_plain = text.MIMEText(message, 'plain')
 			for mailto in emailconf["mailto"]:
+				self.logger.log_message('Sending email to %s' %(mailto, ) , 'info')
 				msg_m = multipart.MIMEMultipart()
 				msg_m['From'] = emailconf["mailfrom"]
 				msg_m['To'] = mailto
@@ -205,7 +206,7 @@ class repack_engine():
 		self.logger = rep_logger(log_args)
 		self.pg_engine.logger = self.logger
 		self.notifier = rep_notifier(self.config["notifier"])
-		
+		self.notifier.logger=self.logger
 	def __load_config(self):
 		"""
 		The method loads the configuration from the file specified in the args.config parameter.
@@ -249,7 +250,7 @@ class repack_engine():
 				tab_body.append(tab_row)
 			print(tabulate(tab_body, headers=tab_headers))
 
-	def repack_tables(self):
+	def __repack_tables(self):
 		"""
 		The method performs the repack 
 		"""
@@ -257,9 +258,36 @@ class repack_engine():
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
 		msg_notify = "The repack tables is complete. \nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
+		self.logger.log_message('The repack process for configurantion %s is complete.' % (self.args.config, ), 'info')
 		self.notifier.send_notification('Repack tables complete', msg_notify)
 		
+	def repack_tables(self):
+		if self.config["logging"]["log_dest"]  == 'console':
+			foreground = True
+		else:
+			foreground = False
+			print("Repack tables process started.")
+		keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
+		init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
+		print(init_pid)
+		self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
+		init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
+		init_daemon.start()
+
 	def prepare_repack(self):
+		if self.config["logging"]["log_dest"]  == 'console':
+			foreground = True
+		else:
+			foreground = False
+			print("Prepare repack process started.")
+		keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
+		init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
+		print(init_pid)
+		self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
+		init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__prepare_repack, foreground=foreground , keep_fds=keep_fds)
+		init_daemon.start()
+		
+	def __prepare_repack(self):
 		"""
 		The method performs the repack 
 		"""
@@ -268,6 +296,7 @@ class repack_engine():
 		self.pg_engine.prepare_repack(self.connection, self.args.connection )
 		msg_notify = "The prepare repack is complete. You can now run the repack_tables command to finalise the swap.\nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
 		self.notifier.send_notification('Prepare repack complete', msg_notify)
+		
 	def create_schema(self):
 		"""
 		The method creates the repack schema for the target connection.
