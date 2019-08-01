@@ -79,7 +79,7 @@ class rep_logger():
 		log_dest = self.args["log_dest"] 
 		
 		self.log_dest = log_dest
-		log_days_keep = self.args["log_days_keep"] 
+		log_days_keep = int(self.args["log_days_keep"])
 		log_name = "repack_%s" % (self.args["config_name"] )
 		log_file = '%s/%s.log' % (log_dir,log_name)
 		str_format = "%(asctime)s %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
