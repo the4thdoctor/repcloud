@@ -784,6 +784,7 @@ class pg_engine(object):
 			self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
 		"""
 		db_handler = self.__connect_db(self.connections[con])
+		tables_repacked=[]
 		for table in self.__tab_list:
 			rep_status = self.__check_repack_step(db_handler, table)
 			if rep_status[1] == "complete":
@@ -801,13 +802,19 @@ class pg_engine(object):
 					self.__create_indices(db_handler, table)
 			else: 
 				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
+			tab_status = self.__check_repack_step(db_handler, table)
+			tables_repacked.append("Table: %s - Step: %s - Status: %s" %(table[0], tab_status[0], tab_status[1]))
 		self.__disconnect_db(db_handler)
+		self.tables_repacked = tables_repacked
 		
 	def __repack_tables(self, con):
 		"""
 			The method executes the repack operation for each table in self.tab_list
 			self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
 		"""
+		tables_repacked=[]
+		
+		
 		db_handler = self.__connect_db(self.connections[con])
 		for table in self.__tab_list:
 			rep_status = self.__check_repack_step(db_handler, table)
@@ -833,12 +840,14 @@ class pg_engine(object):
 					else:
 						self.__remove_table_repack(db_handler, table, con)
 						self.__update_repack_status(db_handler, 6, "failed")
-						break
 				self.__validate_fkeys(db_handler)
 				self.__update_repack_status(db_handler, 8, "complete")
 			else: 
 				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
+			tab_status = self.__check_repack_step(db_handler, table)
+			tables_repacked.append("Table: %s - Step: %s - Status: %s" %(table[0], tab_status[0], tab_status[1]))
 		self.__disconnect_db(db_handler)
+		self.tables_repacked = tables_repacked
 		
 	def __repack_loop(self, con, action='repack'):
 		"""

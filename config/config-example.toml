@@ -9,7 +9,8 @@ log_dest = "file"
 log_days_keep = "4"
 
 [notifier]
-enable_email = Yes
+#enable the email notifier, true or false
+enable_email = false
 
 [notifier.email]
 #mail from 
@@ -20,7 +21,7 @@ mailto = ["foo@example.bar"]
 smtp_server = "smtp.foo.bar"
 #smtp port
 smtp_port = "587"
-# ssl may be none, ssl, starttls
+# ssl may be none, starttls
 smtp_ssl = "starttls" 
 #smtp login username 
 smtp_username = "foo@foo.bar

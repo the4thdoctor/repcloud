@@ -8,7 +8,7 @@ from repcloud import pg_engine
 from daemonize import Daemonize
 import logging
 from logging.handlers  import TimedRotatingFileHandler
-import smtplib
+import smtplib, ssl
 from email.mime import text,multipart
 class rep_notifier():
 	def __init__(self, args):
@@ -26,12 +26,19 @@ class rep_notifier():
 			emailconf = self.args["email"]
 			self.emailer = smtplib.SMTP(host=emailconf["smtp_server"], port=emailconf["smtp_port"])
 			if emailconf["smtp_ssl"] == "starttls":
-				self.emailer.starttls()
-				#self.emailer.login(emailconf["smtp_username"], emailconf["smtp_password"])
+				context = ssl.create_default_context()
+				self.emailer.starttls(context=context )
 	
-	def send_email(self, subject, message):
+	def send_notification(self, subject, message):
 		"""
-			The method sends the message with the given subject to the list of emails configured in notifier.email
+			The method sends the notification according with which notifier is enabled and configured
+		"""
+		if self.args["enable_email"]:
+			self.__send_email(subject, message)
+			
+	def __send_email(self, subject, message):
+		"""
+			The method sends the email with the given subject to the list of emails configured in notifier.email
 		"""
 		if "email" in self.args:
 			emailconf = self.args["email"]
@@ -249,8 +256,8 @@ class repack_engine():
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
-		
-		self.notifier.send_email('Repack tables complete', 'The repack tables is complete')
+		msg_notify = "The repack tables is complete. \nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
+		self.notifier.send_notification('Repack tables complete', msg_notify)
 		
 	def prepare_repack(self):
 		"""
@@ -259,7 +266,8 @@ class repack_engine():
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.prepare_repack(self.connection, self.args.connection )
-		self.notifier.send_email('Prepare repack complete', 'The repack tables is complete')
+		msg_notify = "The prepare repack is complete. You can now run the repack_tables command to finalise the swap.\nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
+		self.notifier.send_notification('Prepare repack complete', msg_notify)
 	def create_schema(self):
 		"""
 		The method creates the repack schema for the target connection.
