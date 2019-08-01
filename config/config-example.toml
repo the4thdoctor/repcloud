@@ -7,6 +7,27 @@ log_level = "debug"
 log_dest = "file"
 # how many days to keep the activity logs
 log_days_keep = "4"
+
+[notifier]
+enable_email = Yes
+
+[notifier.email]
+#mail from 
+mailfrom= "foo@foo.bar"
+#list of emails to send the notify message
+mailto = ["foo@example.bar"]
+#smtp server
+smtp_server = "smtp.foo.bar"
+#smtp port
+smtp_port = "587"
+# ssl may be none, ssl, starttls
+smtp_ssl = "starttls" 
+#smtp login username 
+smtp_username = "foo@foo.bar
+#smtp login password
+smtp_password = "foobar"
+
+
 [connections.repack]
 #the user owning the relations we want to repack
 user = "db_username"

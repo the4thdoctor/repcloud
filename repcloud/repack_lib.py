@@ -8,7 +8,44 @@ from repcloud import pg_engine
 from daemonize import Daemonize
 import logging
 from logging.handlers  import TimedRotatingFileHandler
-
+import smtplib
+from email.mime import text,multipart
+class rep_notifier():
+	def __init__(self, args):
+		"""
+		Class constructor for the notifier facility
+		"""
+		self.args = args 
+		self.__init_emailer()
+		print(self.args["enable_email"])
+	def __init_emailer(self):
+		"""
+			The method initialise the emailer if any configuration is present
+		"""
+		if "email" in self.args:
+			emailconf = self.args["email"]
+			self.emailer = smtplib.SMTP(host=emailconf["smtp_server"], port=emailconf["smtp_port"])
+			if emailconf["smtp_ssl"] == "starttls":
+				self.emailer.starttls()
+				#self.emailer.login(emailconf["smtp_username"], emailconf["smtp_password"])
+	
+	def send_email(self, subject, message):
+		"""
+			The method sends the message with the given subject to the list of emails configured in notifier.email
+		"""
+		if "email" in self.args:
+			emailconf = self.args["email"]
+			self.emailer.login(emailconf["smtp_username"], emailconf["smtp_password"])
+			msg_plain = text.MIMEText(message, 'plain')
+			for mailto in emailconf["mailto"]:
+				msg_m = multipart.MIMEMultipart()
+				msg_m['From'] = emailconf["mailfrom"]
+				msg_m['To'] = mailto
+				msg_m['Subject'] = subject
+				msg_m.attach(msg_plain)
+				send_msg = msg_m.as_string()
+				self.emailer.sendmail(emailconf["mailfrom"], mailto, send_msg)
+			self.emailer.quit()
 
 class rep_logger():
 	def __init__(self, args):
@@ -160,8 +197,7 @@ class repack_engine():
 		log_args["debug"] = self.args.debug
 		self.logger = rep_logger(log_args)
 		self.pg_engine.logger = self.logger
-		
-	
+		self.notifier = rep_notifier(self.config["notifier"])
 		
 	def __load_config(self):
 		"""
@@ -213,7 +249,9 @@ class repack_engine():
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
-	
+		
+		self.notifier.send_email('Repack tables complete', 'The repack tables is complete')
+		
 	def prepare_repack(self):
 		"""
 		The method performs the repack 
@@ -221,6 +259,7 @@ class repack_engine():
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.prepare_repack(self.connection, self.args.connection )
+		self.notifier.send_email('Prepare repack complete', 'The repack tables is complete')
 	def create_schema(self):
 		"""
 		The method creates the repack schema for the target connection.

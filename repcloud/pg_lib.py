@@ -812,7 +812,6 @@ class pg_engine(object):
 		for table in self.__tab_list:
 			rep_status = self.__check_repack_step(db_handler, table)
 			if rep_status[1] == "complete":
-				print(rep_status[2])
 				if rep_status[2] == 8:
 					self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
 					self.__create_new_table(db_handler, table)
