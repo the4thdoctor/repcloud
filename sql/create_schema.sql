@@ -68,6 +68,7 @@ CREATE TABLE sch_repcloud.t_view_def (
 	t_create_view text NOT NULL,
 	t_drop_view text NOT NULL,
 	t_refresh_matview text NULL,
+	t_idx_matview text[] NULL,
 	CONSTRAINT pk_t_view_def PRIMARY KEY (i_id_view)
 );
 
@@ -477,7 +478,8 @@ BEGIN
 			t_change_schema,
 			t_create_view,
 			t_drop_view,
-			t_refresh_matview
+			t_refresh_matview,
+			t_idx_matview
 		)
 	SELECT 
 		v_i_id_table,
@@ -485,7 +487,16 @@ BEGIN
 		t_change_schema,
 		t_create_view,
 		t_drop_view,
-		t_refresh_matview
+		t_refresh_matview,
+		(
+			SELECT 
+				array_agg(format('%s;',indexdef)) 
+			FROM 
+				pg_indexes 
+			WHERE 
+					tablename = v_view_name
+				AND	schemaname = v_schema_name
+		)
 	FROM	
 		sch_repcloud.v_get_dep_views
 	WHERE	
@@ -1258,6 +1269,7 @@ CREATE OR REPLACE VIEW v_get_dep_views
 AS
 SELECT 
 	v_view_name,
+	v_schema_name,
 	oid_referencing,
 	format('ALTER %s VIEW %I.%I SET SCHEMA sch_repdrop;',t_matview,v_schema_name,v_view_name ) AS t_change_schema,
 	format('CREATE %s VIEW %I.%I AS %s %s;',t_matview,v_schema_name,v_view_name,trim(trailing ';' from pg_get_viewdef(oid_view)),t_no_data) AS t_create_view,
@@ -1265,7 +1277,7 @@ SELECT
 	CASE 
 	WHEN v_rel_kind='m'
 	THEN
-		format('REFRESH CONCURRENTLY MATERIALIZED VIEW %I.%I ;',v_schema_name,v_view_name)
+		format('REFRESH MATERIALIZED VIEW %I.%I ;',v_schema_name,v_view_name)
 	END AS t_refresh_matview
 	
 FROM

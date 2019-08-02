@@ -676,7 +676,36 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_analyze)
 		self.__update_repack_status(db_handler, 1, "complete")
 		
-	
+	def __refresh_matviews(self, db_handler, table):
+		"""
+			The method refreshes all the materialised views attached to the main table and 
+			creates on them the required indices.
+		"""
+		sql_get_matview= """
+			SELECT 
+				vie.t_refresh_matview,
+				unnest(coalesce(vie.t_idx_matview,array['SELECT True;']::text[])) AS t_create_idx,
+				v_view_name
+			FROM 
+				sch_repcloud.t_view_def vie 
+				INNER JOIN sch_repcloud.t_table_repack tab
+				ON tab.i_id_table=vie.i_id_table
+			WHERE 
+					vie.t_refresh_matview IS NOT NULL
+				AND	tab.v_schema_name=%s
+				AND tab.v_old_table_name=%s
+			;
+		"""
+		db_handler["cursor"].execute(sql_get_matview,  (table[1], table[2], ))
+		view_list = db_handler["cursor"].fetchall()
+		if len(view_list)>0:
+			matview=view_list[0]
+			self.logger.log_message('Creating the indices on the materialised view %s. ' % (matview[2],  ), 'info')
+			for view in view_list:
+				db_handler["cursor"].execute(view[1])		
+			self.logger.log_message('Refreshing the materialised view %s. ' % (matview[2],  ), 'info')
+			db_handler["cursor"].execute(matview[0])		
+			
 	def __create_tab_fkeys(self, db_handler, table):
 		"""
 		The method builds the foreign keys from the new table to the existing tables
@@ -837,6 +866,7 @@ class pg_engine(object):
 						self.__remove_table_repack(db_handler, table, con)
 						self.__update_repack_status(db_handler, 6, "failed")
 				self.__validate_fkeys(db_handler)
+				self.__refresh_matviews(db_handler, table)
 				self.__update_repack_status(db_handler, 8, "complete")
 			else: 
 				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
