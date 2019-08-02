@@ -67,6 +67,7 @@ CREATE TABLE sch_repcloud.t_view_def (
 	t_change_schema text NOT NULL,
 	t_create_view text NOT NULL,
 	t_drop_view text NOT NULL,
+	t_refresh_matview text NULL,
 	CONSTRAINT pk_t_view_def PRIMARY KEY (i_id_view)
 );
 
@@ -475,18 +476,20 @@ BEGIN
 			v_view_name,
 			t_change_schema,
 			t_create_view,
-			t_drop_view
+			t_drop_view,
+			t_refresh_matview
 		)
 	SELECT 
 		v_i_id_table,
-		relname,
+		v_view_name,
 		t_change_schema,
 		t_create_view,
-		t_drop_view
+		t_drop_view,
+		t_refresh_matview
 	FROM	
 		sch_repcloud.v_get_dep_views
 	WHERE	
-		refobjid=v_oid_old_table
+		oid_referencing=v_oid_old_table
 	;
 		
 	DELETE FROM sch_repcloud.t_idx_repack
@@ -1253,61 +1256,84 @@ WHERE
 
 CREATE OR REPLACE VIEW v_get_dep_views
 AS
-	SELECT DISTINCT 
-		clv.relname,
-		nspv.nspname,
-	 	dep.deptype, 
-		dep.classid, 
-		dep.objid,
-		dep.refclassid,
-		dep.refobjid,
-		ad.adsrc,
-		cl.relkind,
-		format('ALTER VIEW %I.%I SET SCHEMA sch_repdrop;',nspv.nspname,clv.relname ) AS t_change_schema,
-		format('CREATE VIEW %I.%I AS %s;',nspv.nspname,clv.relname,pg_get_viewdef(clv.oid)) AS t_create_view,
-		format('DROP VIEW %I.%I ;',nspv.nspname,clv.relname) AS t_drop_view
+SELECT 
+	v_view_name,
+	oid_referencing,
+	format('ALTER %s VIEW %I.%I SET SCHEMA sch_repdrop;',t_matview,v_schema_name,v_view_name ) AS t_change_schema,
+	format('CREATE %s VIEW %I.%I AS %s %s;',t_matview,v_schema_name,v_view_name,trim(trailing ';' from pg_get_viewdef(oid_view)),t_no_data) AS t_create_view,
+	format('DROP %s VIEW %I.%I ;',t_matview,v_schema_name,v_view_name) AS t_drop_view,
+	CASE 
+	WHEN v_rel_kind='m'
+	THEN
+		format('REFRESH CONCURRENTLY MATERIALIZED VIEW %I.%I ;',v_schema_name,v_view_name)
+	END AS t_refresh_matview
+	
+FROM
+(
+	SELECT DISTINCT
+		clv.oid AS oid_view,
+		dep.refobjid AS oid_referencing,
+		clv.relname AS v_view_name,
+		nspv.nspname AS v_schema_name,
+		clv.relkind AS v_rel_kind,
+		CASE WHEN 
+			clv.relkind='m'
+		THEN	
+			'MATERIALIZED'
+		ELSE
+			''
+		END AS t_matview,
+		CASE WHEN 
+			clv.relkind='m'
+		THEN	
+			'WITH NO DATA'
+		ELSE
+			''
+		END AS t_no_data
+		FROM pg_depend dep
+			LEFT JOIN pg_class cl 
+				ON dep.objid=cl.oid
+			LEFT JOIN pg_attribute att 
+				ON dep.objid=att.attrelid AND dep.objsubid=att.attnum
+			LEFT JOIN pg_namespace nsc 
+				ON cl.relnamespace=nsc.oid
+			LEFT JOIN pg_proc pr 
+				ON dep.objid=pr.oid
+			LEFT JOIN pg_namespace nsp 
+				ON pr.pronamespace=nsp.oid
+			LEFT JOIN pg_trigger tg 
+				ON dep.objid=tg.oid
+			LEFT JOIN pg_type ty 
+				ON dep.objid=ty.oid
+			LEFT JOIN pg_namespace nst 
+				ON ty.typnamespace=nst.oid
+			LEFT JOIN pg_constraint co 
+				ON dep.objid=co.oid
+			LEFT JOIN pg_class coc 
+				ON co.conrelid=coc.oid
+			LEFT JOIN pg_namespace nso 
+				ON co.connamespace=nso.oid
+			LEFT JOIN pg_rewrite rw 
+				ON dep.objid=rw.oid
+			LEFT JOIN pg_class clrw 
+				ON clrw.oid=rw.ev_class
+			LEFT JOIN pg_namespace nsrw 
+				ON clrw.relnamespace=nsrw.oid
+			LEFT JOIN pg_language la 
+				ON dep.objid=la.oid
+			LEFT JOIN pg_namespace ns 
+				ON dep.objid=ns.oid
+			LEFT JOIN pg_attrdef ad 
+				ON ad.oid=dep.objid
+			INNER JOIN pg_rewrite rev
+				ON dep.objid=rev.oid
+			INNER JOIN pg_class clv
+				ON rev.ev_class=clv.oid
+			INNER JOIN pg_namespace nspv
+				ON nspv.oid=clv.relnamespace
+	WHERE
+		dep.classid='pg_rewrite'::regclass
 
-	FROM pg_depend dep
-		LEFT JOIN pg_class cl 
-			ON dep.objid=cl.oid
-		LEFT JOIN pg_attribute att 
-			ON dep.objid=att.attrelid AND dep.objsubid=att.attnum
-		LEFT JOIN pg_namespace nsc 
-			ON cl.relnamespace=nsc.oid
-		LEFT JOIN pg_proc pr 
-			ON dep.objid=pr.oid
-		LEFT JOIN pg_namespace nsp 
-			ON pr.pronamespace=nsp.oid
-		LEFT JOIN pg_trigger tg 
-			ON dep.objid=tg.oid
-		LEFT JOIN pg_type ty 
-			ON dep.objid=ty.oid
-		LEFT JOIN pg_namespace nst 
-			ON ty.typnamespace=nst.oid
-		LEFT JOIN pg_constraint co 
-			ON dep.objid=co.oid
-		LEFT JOIN pg_class coc 
-			ON co.conrelid=coc.oid
-		LEFT JOIN pg_namespace nso 
-			ON co.connamespace=nso.oid
-		LEFT JOIN pg_rewrite rw 
-			ON dep.objid=rw.oid
-		LEFT JOIN pg_class clrw 
-			ON clrw.oid=rw.ev_class
-		LEFT JOIN pg_namespace nsrw 
-			ON clrw.relnamespace=nsrw.oid
-		LEFT JOIN pg_language la 
-			ON dep.objid=la.oid
-		LEFT JOIN pg_namespace ns 
-			ON dep.objid=ns.oid
-		LEFT JOIN pg_attrdef ad 
-			ON ad.oid=dep.objid
-		INNER JOIN pg_rewrite rev
-			ON dep.objid=rev.oid
-		INNER JOIN pg_class clv
-			ON rev.ev_class=clv.oid
-		INNER JOIN pg_namespace nspv
-			ON nspv.oid=clv.relnamespace
-WHERE
-	dep.classid='pg_rewrite'::regclass
+) vdat
+
 ;

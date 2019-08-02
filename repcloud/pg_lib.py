@@ -512,11 +512,7 @@ class pg_engine(object):
 					txid_status = db_handler["cursor"].fetchone()
 				"""
 				try:
-					"""if len(lock_referenced)>0:
-						for reflock in lock_referenced:
-							self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (reflock[1], reflock[2] ), 'info')
-							db_handler["cursor"].execute(reflock[0])
-					"""
+					
 					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
 					db_handler["cursor"].execute(sql_lock_table)
 					self.logger.log_message('Lock  acquired, checking if we still have a reasonable amount of rows to replay.',  'info')

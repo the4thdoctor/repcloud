@@ -262,7 +262,8 @@ class repack_engine():
 		self.notifier.send_notification('Repack tables complete', msg_notify)
 		
 	def repack_tables(self):
-		if self.config["logging"]["log_dest"]  == 'console':
+
+		if self.config["logging"]["log_dest"]  == 'console' or self.args.debug:
 			foreground = True
 		else:
 			foreground = False
@@ -275,7 +276,7 @@ class repack_engine():
 		init_daemon.start()
 
 	def prepare_repack(self):
-		if self.config["logging"]["log_dest"]  == 'console':
+		if self.config["logging"]["log_dest"]  == 'console' or self.args.debug:
 			foreground = True
 		else:
 			foreground = False
