@@ -456,6 +456,29 @@ class pg_engine(object):
 				;
 		"""
 			
+		sql_drop_view = """
+			SELECT 
+				v_view_name,
+				t_drop_view 
+			FROM 
+				sch_repcloud.t_view_def 
+			WHERE 
+				i_id_table=%s
+			ORDER BY 
+				i_drop_order;
+		"""
+		sql_create_view = """
+			SELECT 
+				v_view_name,
+				t_create_view 
+			FROM 
+				sch_repcloud.t_view_def 
+			WHERE 
+				i_id_table=%s
+			ORDER BY 
+				i_create_order;
+		"""
+			
 		sql_check_rows = """
 			SELECT 
 				count(i_action_id)
@@ -481,8 +504,18 @@ class pg_engine(object):
 		sql_drop_old_table = """
 			DROP TABLE sch_repdrop.%s ;
 		""" % (table[2],)
+		
+		db_handler["cursor"].execute(sql_drop_view,  (self.__id_table, ))
+		view_drop = db_handler["cursor"].fetchall()
+		if view_drop:
+			db_handler["cursor"].execute(sql_create_view,  (self.__id_table, ))
+			view_create = db_handler["cursor"].fetchall()
+		
 		db_handler["cursor"].execute(sql_swap,  (table[1], table[2], ))
 		table_swap = db_handler["cursor"].fetchall()
+		
+		
+		
 		sql_check_rows = sql_check_rows % table_swap[0][11]
 		db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
 		self.__update_repack_status(db_handler, 4, "in progress")
@@ -543,13 +576,14 @@ class pg_engine(object):
 						db_handler["cursor"].execute(tswap[1])	
 						self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
 						db_handler["cursor"].execute(tswap[2])	
-						if  tswap[4]:
-							self.logger.log_message("table has views: %s" %tswap[4], 'debug')
-							for vswap in table_swap:
-								self.logger.log_message("drop old view", 'debug')
-								db_handler["cursor"].execute(vswap[5])		
-								self.logger.log_message("create view on new table", 'debug')
-								db_handler["cursor"].execute(vswap[6])	
+						if view_drop:
+							self.logger.log_message("dropping the views referencing the table ", 'debug')
+							for view in view_drop:
+								self.logger.log_message("drop view %s" % (view[0]), 'debug')
+								db_handler["cursor"].execute(view[1])		
+							for view in view_create:
+								self.logger.log_message("create view %s" % (view[0]), 'debug')
+								db_handler["cursor"].execute(view[1])		
 						self.logger.log_message("Dropping the logging triggers", 'info')
 						db_handler["cursor"].execute(sql_drop_trg)
 						sql_drop_log_table = sql_drop_log_table % tswap[11]

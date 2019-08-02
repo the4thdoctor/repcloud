@@ -69,6 +69,8 @@ CREATE TABLE sch_repcloud.t_view_def (
 	t_drop_view text NOT NULL,
 	t_refresh_matview text NULL,
 	t_idx_matview text[] NULL,
+	i_create_order integer NOT NULL,
+	i_drop_order integer NOT NULL,
 	CONSTRAINT pk_t_view_def PRIMARY KEY (i_id_view)
 );
 
@@ -471,18 +473,63 @@ BEGIN
 	DELETE FROM sch_repcloud.t_view_def
 	WHERE i_id_table=v_i_id_table;
 	
+	
+	WITH RECURSIVE tabv AS 
+	(
+		SELECT 
+			tab.i_id_table,
+			vie.v_view_name,
+			vie.t_change_schema,
+			vie.t_create_view,
+			vie.t_drop_view,
+			vie.t_refresh_matview,
+			vie.oid_referencing,
+			vie.oid_view,
+			vie.v_schema_name,
+			0 AS create_order,
+			0 AS drop_order
+		FROM 
+			sch_repcloud.v_get_dep_views vie 
+			INNER JOIN sch_repcloud.t_table_repack tab 
+				ON tab.oid_old_table=vie.oid_referencing
+		WHERE 
+				tab.i_id_table=v_i_id_table
+		 UNION ALL
+		 SELECT 
+			tab.i_id_table,
+			vie.v_view_name,
+			vie.t_change_schema,
+			vie.t_create_view,
+			vie.t_drop_view,
+			vie.t_refresh_matview,
+			vie.oid_referencing,
+			vie.oid_view,
+			vie.v_schema_name,
+			create_order + 1 AS create_order,
+			drop_order - 1 AS drop_order
+		FROM 
+			sch_repcloud.v_get_dep_views vie 
+			INNER JOIN tabv tab
+				ON tab.oid_view=vie.oid_referencing
+		WHERE
+			vie.oid_referencing<>vie.oid_view
+		
+	)	
+	
 	INSERT INTO sch_repcloud.t_view_def
-		(
-			i_id_table,
-			v_view_name,
-			t_change_schema,
-			t_create_view,
-			t_drop_view,
-			t_refresh_matview,
-			t_idx_matview
-		)
+			(
+				i_id_table,
+				v_view_name,
+				t_change_schema,
+				t_create_view,
+				t_drop_view,
+				t_refresh_matview,
+				t_idx_matview,
+				i_create_order,
+				i_drop_order
+			)
 	SELECT 
-		v_i_id_table,
+		i_id_table,
 		v_view_name,
 		t_change_schema,
 		t_create_view,
@@ -496,12 +543,13 @@ BEGIN
 			WHERE 
 					tablename = v_view_name
 				AND	schemaname = v_schema_name
-		)
-	FROM	
-		sch_repcloud.v_get_dep_views
-	WHERE	
-		oid_referencing=v_oid_old_table
+		),
+		create_order,
+		drop_order
+	FROM tabv
+	
 	;
+
 		
 	DELETE FROM sch_repcloud.t_idx_repack
 	WHERE 
@@ -1271,6 +1319,7 @@ SELECT
 	v_view_name,
 	v_schema_name,
 	oid_referencing,
+	oid_view,
 	format('ALTER %s VIEW %I.%I SET SCHEMA sch_repdrop;',t_matview,v_schema_name,v_view_name ) AS t_change_schema,
 	format('CREATE %s VIEW %I.%I AS %s %s;',t_matview,v_schema_name,v_view_name,trim(trailing ';' from pg_get_viewdef(oid_view)),t_no_data) AS t_create_view,
 	format('DROP %s VIEW %I.%I ;',t_matview,v_schema_name,v_view_name) AS t_drop_view,
