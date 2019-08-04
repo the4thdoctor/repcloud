@@ -715,30 +715,42 @@ class pg_engine(object):
 			The method refreshes all the materialised views attached to the main table and 
 			creates on them the required indices.
 		"""
-		sql_get_matview= """
-			SELECT 
+		sql_get_refresh = """
+			SELECT
+				vie.i_id_view,
 				vie.t_refresh_matview,
-				unnest(coalesce(vie.t_idx_matview,array['SELECT True;']::text[])) AS t_create_idx,
-				v_view_name
+				vie.v_view_name
 			FROM 
 				sch_repcloud.t_view_def vie 
 				INNER JOIN sch_repcloud.t_table_repack tab
 				ON tab.i_id_table=vie.i_id_table
 			WHERE 
-					vie.t_refresh_matview IS NOT NULL
-				AND	tab.v_schema_name=%s
-				AND tab.v_old_table_name=%s
+						vie.t_refresh_matview IS NOT NULL
+					AND tab.i_id_table=%s
+			ORDER BY 
+				i_create_order;
+		"""
+		
+		db_handler["cursor"].execute(sql_get_refresh,  (self.__id_table, ))
+		refresh_view = db_handler["cursor"].fetchall()
+		
+		sql_get_idx = """
+			SELECT 
+				unnest(coalesce(vie.t_idx_matview)) AS t_create_idx
+			FROM 
+				sch_repcloud.t_view_def vie 
+			WHERE 
+				vie.i_id_view=%s
 			;
 		"""
-		db_handler["cursor"].execute(sql_get_matview,  (table[1], table[2], ))
-		view_list = db_handler["cursor"].fetchall()
-		if len(view_list)>0:
-			matview=view_list[0]
-			self.logger.log_message('Creating the indices on the materialised view %s. ' % (matview[2],  ), 'info')
-			for view in view_list:
-				db_handler["cursor"].execute(view[1])		
+		for matview in refresh_view:
+			self.logger.log_message('Creating the indices on the materialised view %s if any. ' % (matview[2],  ), 'info')
+			db_handler["cursor"].execute(sql_get_idx,  (matview[0], ))
+			idx_list = db_handler["cursor"].fetchall()
+			for idx in idx_list:
+				db_handler["cursor"].execute(idx[0])		
 			self.logger.log_message('Refreshing the materialised view %s. ' % (matview[2],  ), 'info')
-			db_handler["cursor"].execute(matview[0])		
+			db_handler["cursor"].execute(matview[1])		
 			
 	def __create_tab_fkeys(self, db_handler, table):
 		"""
