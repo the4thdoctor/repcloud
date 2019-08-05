@@ -126,33 +126,38 @@ class pg_engine(object):
 		schemas = self.connections[con]["schemas"]
 		filter = []
 		db_handler = self.__connect_db(self.connections[con])
-		if len(tables)>0:
-			filter.append((db_handler["cursor"].mogrify("format('%%I.%%I',v_schema,v_table) = ANY(%s)",  (tables, ))).decode())
-		if len(schemas)>0:
-			filter.append((db_handler["cursor"].mogrify("v_schema = ANY(%s)",  (schemas, ))).decode())
-		if len(filter)>0:
-			sql_filter="WHERE (%s)AND con.contype='p'" % " OR ".join(filter)
-			
-		sql_tab = """
-			SELECT 
-				format('%%I.%%I',tab.v_schema,tab.v_table),
-				tab.v_schema,
-				tab.v_table,
-				tab.i_tab_size,
-				tab.t_tab_size,
-				tab.t_tab_wasted_bytes
-			FROM 
-				sch_repcloud.v_tab_bloat tab
-				INNER JOIN pg_constraint con 
-					ON con.conrelid=tab.o_tab_oid
-			%s
-			ORDER BY i_tab_wasted_bytes DESC
+		schema_exists = self.__check_replica_schema(db_handler)
+		if schema_exists[0]:
+			if len(tables)>0:
+				filter.append((db_handler["cursor"].mogrify("format('%%I.%%I',v_schema,v_table) = ANY(%s)",  (tables, ))).decode())
+			if len(schemas)>0:
+				filter.append((db_handler["cursor"].mogrify("v_schema = ANY(%s)",  (schemas, ))).decode())
+			if len(filter)>0:
+				sql_filter="WHERE (%s)AND con.contype='p'" % " OR ".join(filter)
+				
+			sql_tab = """
+				SELECT 
+					format('%%I.%%I',tab.v_schema,tab.v_table),
+					tab.v_schema,
+					tab.v_table,
+					tab.i_tab_size,
+					tab.t_tab_size,
+					tab.t_tab_wasted_bytes
+				FROM 
+					sch_repcloud.v_tab_bloat tab
+					INNER JOIN pg_constraint con 
+						ON con.conrelid=tab.o_tab_oid
+				%s
+				ORDER BY i_tab_wasted_bytes DESC
 
-		;""" % sql_filter
-		db_handler["cursor"].execute(sql_tab)
-		self.__tab_list = db_handler["cursor"].fetchall()
-		self.__disconnect_db(db_handler)
-	
+			;""" % sql_filter
+			db_handler["cursor"].execute(sql_tab)
+			self.__tab_list = db_handler["cursor"].fetchall()
+			self.__disconnect_db(db_handler)
+		else:
+			self.logger.args["log_dest"]="console"
+			self.logger.log_message("The repack schema is missing. Please run the command create_schema.", 'warning')
+		
 	def __check_repack_step(self, db_handler, table):
 		"""
 			The method retrieves the repack status for the given table.
@@ -934,6 +939,7 @@ class pg_engine(object):
 			self.__repack_tables(con)
 		if action == 'prepare':
 			self.__prepare_repack(con)
+			
 	def drop_repack_schema(self, connection, coname):
 		"""
 			The method runs the __create_repack_schema method for the given connection or 
