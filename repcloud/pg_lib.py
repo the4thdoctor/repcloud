@@ -750,8 +750,12 @@ class pg_engine(object):
 			for idx in idx_list:
 				db_handler["cursor"].execute(idx[0])		
 			self.logger.log_message('Refreshing the materialised view %s. ' % (matview[2],  ), 'info')
-			db_handler["cursor"].execute(matview[1])		
-			
+			try:
+				db_handler["cursor"].execute(matview[1])		
+			except psycopg2.Error as e:
+				self.logger.log_message('An error occurred during the refresh of the materialised view %s.' %  (matview[2],  ), 'info')
+				self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+	
 	def __create_tab_fkeys(self, db_handler, table):
 		"""
 		The method builds the foreign keys from the new table to the existing tables
