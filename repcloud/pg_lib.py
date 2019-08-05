@@ -122,6 +122,7 @@ class pg_engine(object):
 		tables and schemas within the connection string to filter them.
 		If both values are empty all the tables are returned.
 		"""
+		sql_filter= ""
 		tables = self.connections[con]["tables"]
 		schemas = self.connections[con]["schemas"]
 		filter = []
@@ -133,8 +134,7 @@ class pg_engine(object):
 			if len(schemas)>0:
 				filter.append((db_handler["cursor"].mogrify("v_schema = ANY(%s)",  (schemas, ))).decode())
 			if len(filter)>0:
-				sql_filter="WHERE (%s)AND con.contype='p'" % " OR ".join(filter)
-				
+				sql_filter="AND (%s)" % " OR ".join(filter)
 			sql_tab = """
 				SELECT 
 					format('%%I.%%I',tab.v_schema,tab.v_table),
@@ -147,6 +147,10 @@ class pg_engine(object):
 					sch_repcloud.v_tab_bloat tab
 					INNER JOIN pg_constraint con 
 						ON con.conrelid=tab.o_tab_oid
+				WHERE
+						con.contype='p'
+					AND	v_schema NOT IN ('information_schema','pg_catalog','sch_repcloud','sch_repnew','sch_repdrop')
+					AND	v_schema  NOT LIKE 'pg_%%'
 				%s
 				ORDER BY i_tab_wasted_bytes DESC
 

@@ -262,31 +262,37 @@ class repack_engine():
 		self.notifier.send_notification('Repack tables complete', msg_notify)
 		
 	def repack_tables(self):
-
-		if self.config["logging"]["log_dest"]  == 'console' or self.args.debug:
-			foreground = True
+		if self.args.debug:
+			self.logger.args["log_dest"]="console"
+			self.__repack_tables()
 		else:
-			foreground = False
-			print("Repack tables process started.")
-		keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
-		init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
-		print(init_pid)
-		self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
-		init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
-		init_daemon.start()
+			if self.config["logging"]["log_dest"]  == 'console':
+				foreground = True
+			else:
+				foreground = False
+				print("Repack tables process started.")
+			keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
+			init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
+			self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
+			init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
+			init_daemon.start()
 
 	def prepare_repack(self):
-		if self.config["logging"]["log_dest"]  == 'console' or self.args.debug:
-			foreground = True
+		if self.args.debug:
+			self.logger.args["log_dest"]="console"
+			self.__prepare_repack()
 		else:
-			foreground = False
-			print("Prepare repack process started.")
-		keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
-		init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
-		print(init_pid)
-		self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
-		init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__prepare_repack, foreground=foreground , keep_fds=keep_fds)
-		init_daemon.start()
+			if self.config["logging"]["log_dest"]  == 'console':
+				foreground = True
+			else:
+				foreground = False
+				print("Prepare repack process started.")
+			keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
+			init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
+			print(init_pid)
+			self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
+			init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__prepare_repack, foreground=foreground , keep_fds=keep_fds)
+			init_daemon.start()
 		
 	def __prepare_repack(self):
 		"""
