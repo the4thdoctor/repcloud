@@ -8,7 +8,8 @@ commands = [
 	'create_schema',
 	'drop_schema',
 	'show_connections', 
-	'repack_tables'
+	'repack_tables', 
+	'prepare_repack'
 	]
 
 if __name__ == "__main__":
