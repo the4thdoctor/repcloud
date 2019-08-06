@@ -27,7 +27,7 @@ smtp_port = "587"
 # ssl may be none, starttls
 smtp_ssl = "starttls" 
 #smtp login username 
-smtp_username = "foo@foo.bar
+smtp_username = "foo@foo.bar"
 #smtp login password
 smtp_password = "foobar"
 
