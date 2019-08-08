@@ -167,14 +167,13 @@ class repack_engine():
 		self.lst_yes =  ['yes',  'Yes', 'y', 'Y']
 		config_file = self.args.config.split('.')
 		self.config_name = config_file [0]
-		python_lib=get_python_lib()
 		self.connection = None
-
+		lib_dir = os.path.dirname(os.path.realpath(__file__))
 		rep_dir = "%s/.%s" % (os.path.expanduser('~'),  app_dir)
 		
 			
 		local_conf = "%s/%s" % ( rep_dir, config_dir )
-		self.global_conf_example = '%s/%s/%s/config-example.toml' % (python_lib,  app_dir, config_dir, )
+		self.global_conf_example = '%s/%s/config-example.toml' % (lib_dir, config_dir, )
 		self.local_conf_example = '%s/config-example.yml' % local_conf
 		
 		local_logs = "%s/logs/" % rep_dir

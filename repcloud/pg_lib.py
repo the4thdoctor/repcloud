@@ -1,16 +1,17 @@
 import psycopg2
 from psycopg2 import sql
 #from psycopg2.extras import RealDictCursor
-from distutils.sysconfig import get_python_lib
 import sys
+import os
 import time
 class pg_engine(object):
 	def __init__(self):
 		"""
 		class constructor, set the useful variables
 		"""
-		python_lib=get_python_lib()
-		self.sql_dir = "%s/repcloud/sql/" % python_lib
+		
+		lib_dir = os.path.dirname(os.path.realpath(__file__))
+		self.sql_dir = "%s/sql/" % lib_dir
 		self.connections = None
 		self.__tab_list = None
 		self.__id_table = None

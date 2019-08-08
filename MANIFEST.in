@@ -1,4 +1,6 @@
-include config/config-example.toml
+include repcloud/config/config-example.toml
+include repcloud/sql/create_schema.sql
+include repcloud/sql/drop_schema.sql
 include LICENSE.txt
 include repcloud/repack_lib.py
 include repcloud/pg_lib.py

@@ -1,0 +1,57 @@
+#where to create the daemon's pid
+pid_dir = "~/.repcloud/pid"
+
+[logging]
+#where to store the logs
+log_dir = "~/.repcloud/logs"
+#log level 
+log_level = "debug"
+#log destination file or console
+log_dest = "file"
+# how many days to keep the activity logs
+log_days_keep = "4"
+
+[notifier]
+#enable the email notifier, true or false
+enable_email = false
+
+[notifier.email]
+#mail from 
+mailfrom= "foo@foo.bar"
+#list of emails to send the notify message
+mailto = ["foo@example.bar"]
+#smtp server
+smtp_server = "smtp.foo.bar"
+#smtp port
+smtp_port = "587"
+# ssl may be none, starttls
+smtp_ssl = "starttls" 
+#smtp login username 
+smtp_username = "foo@foo.bar"
+#smtp login password
+smtp_password = "foobar"
+
+
+[connections.repack]
+#the user owning the relations we want to repack
+user = "db_username"
+# the user's password
+password = "db_password"
+# the port used by the postgresql cluster
+port = "5432"
+# the hostname to connect to
+host = "db_host"
+# the database to  connect to
+database = "db_to_repack"
+#  ssl mode for the connection, allowed values: disable, allow, prefer, require, verify-ca verify-full check https://www.postgresql.org/docs/current/libpq-ssl.html for the details
+sslmode = "prefer"
+# the schemas and the tables we want to repack. if the lists are empty all the relations  within the database are processed
+#the lists are cumulative
+schemas = ['foo',]
+tables = ['foo.bar']
+#sets the maximum amount of rows to replay during the sync run
+max_replay_rows = "100000"
+#sets the maximum time to wait before wait for lock expires
+lock_timeout = "3s"
+#sets the time in seconds to wait for sampling the update rate on the repacked table
+check_time = "10"
