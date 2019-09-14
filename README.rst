@@ -18,7 +18,7 @@ Sponsors
 Coding repcloud has been possible thanks to the sponsorhip of `Cleo AI. https://www.meetcleo.com/ <https://www.meetcleo.com/>`_  
 
 
-.. image:: images/cleo_logo.png
+.. image:: https://github.com/the4thdoctor/repcloud/blob/master/images/cleo_logo.png
         :target: https://www.meetcleo.com/
 
 
