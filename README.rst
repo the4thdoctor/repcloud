@@ -84,5 +84,5 @@ if the replay can reach the consistent status with the original table.
 If it's not possible the swap attempt aborts.
 
 License
-...................................
+------------------------------
 repcloud is released under the terms of the `PostgreSQL license - https://opensource.org/licenses/postgresql <https://opensource.org/licenses/postgresql>`_  
