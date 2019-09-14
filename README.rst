@@ -15,7 +15,7 @@ Views and materialised views referencing the repacked table are dropped and crea
 
 Sponsors
 ...................................
-Coding repcloud has been possible thanks to the sponsorhip of Cleo AI. 
+Coding repcloud has been possible thanks to the sponsorhip of `Cleo AI. https://www.meetcleo.com/ <https://www.meetcleo.com/>`_  
 
 
 .. image:: images/cleo_logo.png
