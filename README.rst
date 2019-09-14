@@ -1,4 +1,5 @@
-# repcloud
+repcloud
+------------------------------
 repcloud is a repacker for postgresql tables. Unlikely pgrepack there's no need for extension or external libraries.
 
 The procedure can repack the tables using a similar strategy like pgrepack but without the physical file swap.
@@ -14,7 +15,8 @@ Views and materialised views referencing the repacked table are dropped and crea
 
 
 
-## Configuration 
+Configuration 
+...................................
 
 The script which executes the repack is rpcl. At its first execution the it creates a directory in the user's home named .repcloud
 Under this directory there are three other subfolders.
@@ -46,8 +48,9 @@ them one by one.
 
 In the configuration file the notifier and notifier.email sections allow to setup an email notification for when the repack or prepare repack is complete.
 	
-The 
-## Limitations
+
+Limitations
+............................
 
 The procedure needs to be able to drop all the objects involved in the repack. Therefore the login user must be the object's owner or 
 should be able to drop the objects.
