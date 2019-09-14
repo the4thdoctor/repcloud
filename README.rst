@@ -13,7 +13,14 @@ A trigger on the original table stores the data changes for which are replayed o
 All the existing indices, foreign keys and referencing foreign keys are created before the swap.
 Views and materialised views referencing the repacked table are dropped and created as well.
 
+Sponsors
+...................................
+Coding repcloud has been possible thanks to the sponsorhip of Cleo AI.
 
+.. image:: images/cleo_logo.png
+        :target: https://www.meetcleo.com/
+
+With many thanks.
 
 Configuration 
 ...................................
