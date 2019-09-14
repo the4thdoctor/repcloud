@@ -82,3 +82,7 @@ until the a sufficient amount of rows are replayed again.
 check_time specifies the time between two checks for changed data on the repacked table. The value will be matched against the replay speed in order to determine
 if the replay can reach the consistent status with the original table.
 If it's not possible the swap attempt aborts.
+
+License
+...................................
+repcloud is released under the terms of the `PostgreSQL license - https://opensource.org/licenses/postgresql <https://opensource.org/licenses/postgresql>`_  
