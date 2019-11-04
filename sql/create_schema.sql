@@ -1088,7 +1088,8 @@ SELECT
 			END
 		ELSE
 			format(
-					'CREATE INDEX %I ON sch_repnew.%I USING %s;',
+					'CREATE %s INDEX %I ON sch_repnew.%I USING %s;',
+					t_unique,
 					t_index_name,
 					v_new_table_name,
 					t_index_def
@@ -1108,7 +1109,10 @@ SELECT
 	tab.v_new_table_name,
 	tab.v_schema_name,
 	idx.v_table_name,
-	idx.b_indisunique,
+	CASE WHEN	idx.b_indisunique
+		THEN 'UNIQUE'
+	ELSE ''
+	END AS t_unique,
 	idx.b_idx_constraint,
 	idx.t_index_name,
 	idx.t_index_def,
