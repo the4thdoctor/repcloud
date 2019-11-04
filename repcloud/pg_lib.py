@@ -817,7 +817,10 @@ class pg_engine(object):
 		if len(validate_list)>0:
 			for validate_stat in validate_list:
 				self.logger.log_message('Validating the foreign key %s on table %s.%s.' % (validate_stat[1], validate_stat[2],validate_stat[3], ),   'info')
-				db_handler["cursor"].execute(validate_stat[0])
+				try:
+					db_handler["cursor"].execute(validate_stat[0])
+				except psycopg2.Error as e:
+					self.logger.log_message("Couldn't validate the foreign key %s on table  %s.%s. %s " % (validate_stat[1],validate_stat[2],validate_stat[3], e,  ), 'warning')
 		self.__update_repack_status(db_handler, 7, "complete")
 	def __create_ref_fkeys(self, db_handler, table):
 		"""
