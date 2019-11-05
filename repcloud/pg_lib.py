@@ -14,6 +14,8 @@ class pg_engine(object):
 		self.sql_dir = "%s/sql/" % lib_dir
 		self.connections = None
 		self.__tab_list = None
+		self.__tables_config = None
+		self.__storage_params = None
 		self.__id_table = None
 		# repack_step 0 to 8, each step may be resumed
 		self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
@@ -212,15 +214,34 @@ class pg_engine(object):
 		tab_rep = db_handler["cursor"].fetchone()
 		app_name = self.__application_name % (tab_rep[0], self.__repack_list[repack_step], )
 		db_handler["cursor"].execute(sql_app_name,  (app_name, ))
+	
+	def __get_table_fillfactor(self, table):
+		"""
+		Returns the table's fillfactor determined by self.__storage_params or none if there is no storage setting.
+		"""
+		fillfactor = None
+		if self.__storage_params:
+			if "fillfactor" in self.__storage_params:
+				fillfactor = self.__storage_params["fillfactor"]
+				if table[1] in self.__storage_params:
+					if "fillfactor" in self.__storage_params[table[1]]:
+						fillfactor = self.__storage_params[table[1]]["fillfactor"]
+						if table[2] in self.__storage_params[table[1]]:
+							if "fillfactor" in self.__storage_params[table[1]][table[2]]:
+								fillfactor = self.__storage_params[table[1]][table[2]]["fillfactor"]
+		
+		return fillfactor
 		
 	def __create_new_table(self, db_handler, table):
 		"""
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
 		"""
-		sql_create_new = """SELECT sch_repcloud.fn_create_repack_table(%s,%s); """	
+		fillfactor = self.__get_table_fillfactor(table)
+		print(fillfactor)
+		sql_create_new = """SELECT sch_repcloud.fn_create_repack_table(%s,%s,%s); """	
 		sql_create_log = """SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
 		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
-		db_handler["cursor"].execute(sql_create_new,  (table[1], table[2], ))
+		db_handler["cursor"].execute(sql_create_new,  (table[1], table[2], fillfactor, ))
 		tab_create = db_handler["cursor"].fetchone()
 		self.__id_table = tab_create[0]
 		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
@@ -942,6 +963,17 @@ class pg_engine(object):
 		"""
 		The method loops trough the tables available for the connection
 		"""
+		if con in self.tables_config:
+			self.__tables_config = self.tables_config[con]
+			if "storage" in self.__tables_config:
+				self.__storage_params = self.__tables_config["storage"]
+			else:
+				self.__storage_params = None
+		
+		else:
+			self.__tables_config = None
+			self.__storage_params = None
+			
 		self.__get_repack_tables(con)
 		if action == 'repack':
 			self.__repack_tables(con)

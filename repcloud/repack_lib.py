@@ -1,7 +1,6 @@
 import sys
 import os, os.path
 from shutil import copy
-from distutils.sysconfig import get_python_lib
 import toml
 from tabulate import tabulate
 from repcloud import pg_engine
@@ -168,22 +167,29 @@ class repack_engine():
 		config_file = self.args.config.split('.')
 		self.config_name = config_file [0]
 		self.connection = None
+		self.__tables_config = {}
 		lib_dir = os.path.dirname(os.path.realpath(__file__))
 		rep_dir = "%s/.%s" % (os.path.expanduser('~'),  app_dir)
 		
 			
 		local_conf = "%s/%s" % ( rep_dir, config_dir )
 		self.global_conf_example = '%s/%s/config-example.toml' % (lib_dir, config_dir, )
-		self.local_conf_example = '%s/config-example.yml' % local_conf
+		self.local_conf_example = '%s/config-example.toml' % local_conf
+		
 		
 		local_logs = "%s/logs/" % rep_dir
 		local_pid = "%s/pid/" % rep_dir
+		self.__table_conf_dir = "%s/table_conf/" % local_conf
+		
+		self.global_table_conf_example = '%s/%s/config-example_repack.toml' % (lib_dir, config_dir, )
+		self.local_table_conf_example = '%s/config-example_repack.toml' % self.__table_conf_dir
 		
 		self.conf_dirs=[
 			rep_dir, 
 			local_conf, 
 			local_logs, 
 			local_pid, 
+			self.__table_conf_dir, 
 		]
 		self.__set_configuration_files()
 		self.__set_conf_permissions(rep_dir)
@@ -193,6 +199,7 @@ class repack_engine():
 		else:
 			self.config_file = "%s/%s.toml" % (local_conf,  self.args.config )
 		self.__load_config()
+		self.__load_table_config()
 		self.pg_engine = pg_engine()
 		
 		log_args={}
@@ -230,9 +237,24 @@ class repack_engine():
 		if self.args.connection !="all":
 			if self.args.connection not in self.config['connections']:
 				print("You specified a not existent connection.")
-				sys.exit(2)
 		self.connection = self.config["connections"]
-
+	def __load_table_config(self):
+		"""
+		Tries to load the per table settings saved in the directory self.__table_conf_dir in the form of <configuration>_<connection>.toml
+		The data is stored in the dictionary self.__tables_config
+		"""
+		config_file = open(self.config_file, 'r')
+		self.config = toml.loads(config_file.read())
+		config_file.close()
+		
+		for connection in self.config["connections"]:
+			table_config_file= '%s/%s_%s.toml' % (self.__table_conf_dir, self.config_name, connection )
+			if os.path.isfile(table_config_file):
+				config_file = open(table_config_file, 'r')
+				table_config = toml.loads(config_file.read())
+				config_file.close()
+				self.__tables_config[connection] = table_config
+		
 	def show_connections(self):
 		"""
 		Displays the connections available for the configuration  nicely formatted
@@ -255,6 +277,7 @@ class repack_engine():
 		"""
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
+		self.pg_engine.tables_config=self.__tables_config
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
 		msg_notify = "The repack tables is complete. \nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
 		self.logger.log_message('The repack process for configurantion %s is complete.' % (self.args.config, ), 'info')
@@ -349,3 +372,12 @@ class repack_engine():
 		else:
 			print ("copying configuration  example in %s" % self.local_conf_example)
 			copy(self.global_conf_example, self.local_conf_example)
+			
+		if os.path.isfile(self.local_table_conf_example):
+			if os.path.getctime(self.global_table_conf_example)>os.path.getctime(self.local_table_conf_example):
+				print ("updating per table configuration example with %s" % self.local_table_conf_example)
+				copy(self.global_table_conf_example, self.local_table_conf_example)
+		else:
+			print ("copying configuration  example in %s" % self.local_table_conf_example)
+			copy(self.global_table_conf_example, self.local_table_conf_example)
+

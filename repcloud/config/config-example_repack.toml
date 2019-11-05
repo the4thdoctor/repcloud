@@ -1,0 +1,6 @@
+#table configuration example
+[foo.bar]
+# sets the fillfactor for the table foo.bar to 20. 
+# allowed values range from 100 (the default) and 10
+fillfactor = 20 
+

@@ -330,12 +330,13 @@ $BODY$
 LANGUAGE plpgsql
 ;
 
-CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_repack_table(text,text) 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_repack_table(text,text,integer) 
 RETURNS bigint as 
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
 	p_t_table			ALIAS FOR $2;
+	p_i_fillfactor		ALIAS FOR $3;
 	v_new_table			character varying(64);
 	v_log_table	character varying(64);
 	v_i_id_table		bigint;
@@ -359,6 +360,14 @@ BEGIN
 			
 		);
 	EXECUTE t_sql_create ;
+	IF p_i_fillfactor IS NOT NULL
+	THEN
+		t_sql_alter=format('ALTER TABLE sch_repnew.%I SET ( fillfactor = %s );',
+		v_new_table,
+		p_i_fillfactor);
+		EXECUTE t_sql_alter ;
+	END IF;
+	
 	v_t_seq_name:=(
 		SELECT 
 			ARRAY[refname,secatt]::text[]
