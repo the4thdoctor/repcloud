@@ -277,10 +277,11 @@ class repack_engine():
 		"""
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
+		print (self.pg_engine.connections)
 		self.pg_engine.tables_config=self.__tables_config
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
 		msg_notify = "The repack tables is complete. \nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
-		self.logger.log_message('The repack process for configurantion %s is complete.' % (self.args.config, ), 'info')
+		self.logger.log_message('The repack process for configuration %s is complete.' % (self.args.config, ), 'info')
 		self.notifier.send_notification('Repack tables complete', msg_notify)
 		
 	def repack_tables(self):

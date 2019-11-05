@@ -914,7 +914,26 @@ class pg_engine(object):
 			tables_repacked.append("Table: %s - Step: %s - Status: %s" %(table[0], tab_status[0], tab_status[1]))
 		self.__disconnect_db(db_handler)
 		self.tables_repacked = tables_repacked
+	
+	def __analyze_tables(self, con):
+		"""
+			Runs analyze after the repack tables
+		"""
+		if "analyze_tables" in self.connections[con]:
+			analyze_tables = self.connections[con]["analyze_tables"]
+		else:
+			analyze_tables = True
 		
+		if analyze_tables:
+			sql_analyze = 'ANALYZE "%s"."%s";'
+			db_handler = self.__connect_db(self.connections[con])
+			for table in self.__tab_list:
+				self.logger.log_message("Running ANALYZE on table %s" % (table[0],  ), 'info')
+				db_handler["cursor"].execute(sql_analyze %  (table[1], table[2], ))
+				
+			self.__disconnect_db(db_handler)
+			
+	
 	def __repack_tables(self, con):
 		"""
 			The method executes the repack operation for each table in self.tab_list
@@ -976,9 +995,13 @@ class pg_engine(object):
 		self.__get_repack_tables(con)
 		if action == 'repack':
 			self.__repack_tables(con)
+			self.__analyze_tables(con)
 		if action == 'prepare':
 			self.__prepare_repack(con)
-			
+		
+		
+		
+		
 	def drop_repack_schema(self, connection, coname):
 		"""
 			The method runs the __create_repack_schema method for the given connection or 
