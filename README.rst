@@ -53,6 +53,52 @@ them one by one.
 
 In the configuration file the notifier and notifier.email sections allow to setup an email notification, which is triggered when the repack or prepare repack process is complete.
 
+Fillfactor
++++++++++++++++
+The tool supports the **fillfactor** setup for the repacked tables. This is possible using a specific configuration file  stored in the directory *~/.repcloud/config/table_conf*
+
+The file describing the storage settings must be named after the configuration and the connection which the settings apply in the form *<configuration>_<connection>.toml*.
+
+For example, if we are using the configuration *default.toml* where there is the connection *repack* the table configuration file's name should be 
+*default_repack.toml* 
+
+If the table settings file is not present then the default values.
+
+Inside the directory *~/.repcloud/config/table_conf* there is an example file to help the configuration.
+
+The configuration at moment supports only **fillfactor** as storage parameter.
+
+A global fillfactor which applies to any table in the database can be set under the section **[storage]**.
+
+Schema wide fillfactor is supported adding the value under the section **[storage.schemaname]**.
+
+Fillfactor for tables can be set using the section named after the schema and the table **[storage.schemaname.tablename]**.
+
+The example configuration file sets the fillfactor:
+
+  * for all the tables in the database to 100
+  * for all the tables in the schema foo to 80
+  * for the table foo.bar to 30
+
+
+::
+
+    #table configuration example
+    # storage data. currently only fillfactor is allowed
+    
+    #set the fillfactor for all the tables 
+    [storage]
+    fillfactor = 100 
+    
+    #sets the fillfactor for all the tables in the schema foo
+    [storage.foo]
+    fillfactor = 80 
+    
+    #set the fillfactor for the table foo.bar
+    [storage.foo.bar]
+    fillfactor = 30 
+
+
 
 Limitations
 ............................

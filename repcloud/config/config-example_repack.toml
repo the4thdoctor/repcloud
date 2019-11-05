@@ -1,6 +1,15 @@
 #table configuration example
-[foo.bar]
-# sets the fillfactor for the table foo.bar to 20. 
-# allowed values range from 100 (the default) and 10
-fillfactor = 20 
+# storage data. currently only fillfactor is allowed
+
+#set the fillfactor for all the tables 
+[storage]
+fillfactor = 100 
+
+#sets the fillfactor for all the tables in the schema foo
+[storage.foo]
+fillfactor = 80 
+
+#set the fillfactor for the table foo.bar
+[storage.foo.bar]
+fillfactor = 30 
 
