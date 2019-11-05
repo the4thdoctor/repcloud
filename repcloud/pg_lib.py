@@ -237,7 +237,6 @@ class pg_engine(object):
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
 		"""
 		fillfactor = self.__get_table_fillfactor(table)
-		print(fillfactor)
 		sql_create_new = """SELECT sch_repcloud.fn_create_repack_table(%s,%s,%s); """	
 		sql_create_log = """SELECT sch_repcloud.fn_create_log_table(%s,%s); """	
 		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
