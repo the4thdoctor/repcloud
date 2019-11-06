@@ -277,7 +277,6 @@ class repack_engine():
 		"""
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
-		print (self.pg_engine.connections)
 		self.pg_engine.tables_config=self.__tables_config
 		self.pg_engine.repack_tables(self.connection, self.args.connection )
 		msg_notify = "The repack tables is complete. \nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
@@ -323,6 +322,7 @@ class repack_engine():
 		"""
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
+		self.pg_engine.tables_config=self.__tables_config
 		self.pg_engine.prepare_repack(self.connection, self.args.connection )
 		msg_notify = "The prepare repack is complete. You can now run the repack_tables command to finalise the swap.\nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
 		self.notifier.send_notification('Prepare repack complete', msg_notify)
