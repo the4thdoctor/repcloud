@@ -645,6 +645,7 @@ class pg_engine(object):
 					else:
 						self.logger.log_message('The connection is still active, continuing.' , 'info')
 						db_handler["connection"].rollback()
+						db_handler["connection"].set_session(autocommit=True)
 						continue_replay = True
 						self.__update_repack_status(db_handler, 4,  "in progress")
 					try_swap  = False
@@ -653,7 +654,7 @@ class pg_engine(object):
 					raise
 				db_handler["connection"].set_session(autocommit=True)
 				db_handler["cursor"].execute(sql_reset_lock_timeout )
-				self.__update_repack_status(db_handler, 5, "complete")
+		self.__update_repack_status(db_handler, 5, "complete")
 				
 				
 		
