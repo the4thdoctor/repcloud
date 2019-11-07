@@ -13,3 +13,7 @@ fillfactor = 80
 [storage.foo.bar]
 fillfactor = 30 
 
+#filtering data, currently only jsonb is supported
+[public.foo]
+foobar.type = "jsonb"
+foobar.remove_keys = [ "'key1" ]

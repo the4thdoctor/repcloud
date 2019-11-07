@@ -10,6 +10,7 @@ commands = [
 	'show_connections', 
 	'repack_tables', 
 	'prepare_repack'
+	'abort_repack'
 	]
 
 if __name__ == "__main__":
