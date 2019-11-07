@@ -349,7 +349,7 @@ DECLARE
 BEGIN
 	v_oid_old_table:=format('%I.%I',p_t_schema,p_t_table)::regclass::oid;
 	v_new_table:=format('%I',p_t_table::character varying(30)||'_'||v_oid_old_table::text);
-	v_log_table:=format('%I',v_new_table::character varying(30)||'_log');
+	v_log_table:=format('%I','log_'||v_oid_old_table::text);
 
 	t_sql_create:=format('
 		CREATE TABLE IF NOT EXISTS sch_repnew.%s
@@ -619,7 +619,7 @@ DECLARE
 BEGIN
 	v_i_action_xid:=(txid_current()::bigint);
 
-	v_t_log_table:=format('%s_%s_log',TG_TABLE_NAME,TG_RELID);
+	v_t_log_table:=format('log_%s',TG_RELID);
 	IF TG_OP ='INSERT'
 	THEN
 		v_t_sql_insert:=format(
@@ -744,6 +744,42 @@ LANGUAGE plpgsql
 ;
 
 --VIEWS
+
+CREATE OR REPLACE VIEW v_table_column_types
+AS
+	SELECT 
+		nspname AS schema_name,
+		relname AS table_name,
+		format('{%s}',col_typ_map)::json AS col_typ_map
+		
+	FROM
+		(
+		SELECT 
+		string_agg(format(
+			'"%s":"%s"',
+			replace(attname,'"',''),
+			replace(format_type(att.atttypid, att.atttypmod),'"','')),',') AS col_typ_map,
+		sch.nspname,
+		tab.relname
+		
+	FROM 
+		pg_attribute att 
+		INNER JOIN pg_class tab 
+			ON tab.oid=att.attrelid
+		INNER JOIN pg_catalog.pg_namespace sch
+			ON sch.oid=tab.relnamespace
+	WHERE 
+			attnum>0
+		AND NOT attisdropped
+	GROUP BY nspname,relname
+)
+		t_att
+
+;
+
+
+
+
 
 CREATE OR REPLACE VIEW v_token_idx AS
 SELECT 
@@ -1022,9 +1058,13 @@ FROM
                     tab.relpages as i_tab_pages,
                     tab.reltablespace as tbs_oid
                 FROM
-                    pg_class tab,
-                    pg_namespace sch,
-                    pg_stats sts,
+                    pg_class tab
+                   	INNER JOIN  pg_namespace sch
+                   		ON	tab.relnamespace=sch.oid
+                   	LEFT OUTER JOIN pg_stats sts
+                   		ON sch.nspname=sts.schemaname
+                   		AND sts.tablename=tab.relname,
+                   	
                     (
                         SELECT
                         (
@@ -1059,10 +1099,7 @@ FROM
                         ) t_version
                     ) t_vrs
                 WHERE
-                        sts.tablename=tab.relname
-                    AND tab.relnamespace=sch.oid
-                    AND sch.nspname=sts.schemaname
-										AND tab.relkind='r'
+                     tab.relkind='r'
                 GROUP BY
                     tab.oid,
                     t_vrs.i_pntr_size,

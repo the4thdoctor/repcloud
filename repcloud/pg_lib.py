@@ -687,6 +687,7 @@ class pg_engine(object):
 		"""
 			The method copy the data from the origin's table to the new one
 		"""
+		
 		self.logger.log_message('Creating the logger triggers on the table %s.%s' % (table[1], table[2],  ), 'info')
 		self.__update_repack_status(db_handler, 1, "in progress")
 		sql_create_data_trigger = """
@@ -726,13 +727,11 @@ class pg_engine(object):
 		new_table = db_handler["cursor"].fetchone()
 		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
 		
-		sql_copy = """
-			INSERT INTO sch_repnew.\"%s\" SELECT * FROM \"%s\".\"%s\" ;
-		""" % (new_table[0], table[1],table[2], )
 		
-		sql_analyze = """
-			ANALYZE sch_repnew.\"%s\";
-		""" % (new_table[0],  )
+		#sql_get_fields="""SELECT col_typ_map FROM sch_repcloud.v_table_column_types WHERE schema_name=%s AND table_name=%s """
+		
+		sql_copy = sql.SQL("INSERT INTO sch_repnew.{} SELECT * FROM {}.{} ;").format(sql.Identifier(new_table[0]),sql.Identifier(table[1]), sql.Identifier(table[2]))
+		sql_analyze = sql.SQL("ANALYZE sch_repnew.{};").format(sql.Identifier(new_table[0]))
 		
 		db_handler["cursor"].execute(sql_copy)
 		db_handler["connection"].commit()
@@ -925,11 +924,11 @@ class pg_engine(object):
 			analyze_tables = True
 		
 		if analyze_tables:
-			sql_analyze = 'ANALYZE "%s"."%s";'
 			db_handler = self.__connect_db(self.connections[con])
 			for table in self.__tab_list:
+				sql_analyze = sql.SQL('ANALYZE {}.{};').format(sql.Identifier(table[1]), sql.Identifier(table[2]))
 				self.logger.log_message("Running ANALYZE on table %s" % (table[0],  ), 'info')
-				db_handler["cursor"].execute(sql_analyze %  (table[1], table[2], ))
+				db_handler["cursor"].execute(sql_analyze)
 				
 			self.__disconnect_db(db_handler)
 			
@@ -943,6 +942,7 @@ class pg_engine(object):
 		
 		
 		db_handler = self.__connect_db(self.connections[con])
+		print(self.__tab_list)
 		for table in self.__tab_list:
 			rep_status = self.__check_repack_step(db_handler, table)
 			if rep_status[1] == "complete":
