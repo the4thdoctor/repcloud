@@ -807,16 +807,22 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_get_fkeys,  (table[1], table[2], ))
 		fk_list = db_handler["cursor"].fetchall()
 		for fkey in fk_list:
-			self.logger.log_message('Creating foreign  key %s on table %s. ' % (fkey[4],fkey[3],  ), 'info')
+			self.logger.log_message('Creating foreign  key %s on the table %s. ' % (fkey[4],fkey[3],  ), 'info')
 			db_handler["cursor"].execute(fkey[0])		
-			self.logger.log_message('Dropping the foreign key %s on old table %s. ' % (fkey[4],fkey[3],  ), 'info')
+			self.logger.log_message('Dropping the foreign key %s on the old table %s. ' % (fkey[4],fkey[3],  ), 'info')
 			try:
 				db_handler["cursor"].execute(fkey[1])		
 			except psycopg2.Error as e:
 				if e.pgcode == '40P01':
-					self.logger.log_message('Deadlock detected during the drop of the foreign key %s on old table %s' % (fkey[4],fkey[3],  ), 'info')
+					self.logger.log_message('Deadlock detected during the drop of the foreign key %s on the old table %s' % (fkey[4],fkey[3],  ), 'info')
 					raise
-					
+				else:
+					self.logger.log_message('An error occurred during the drop of the foreign key %s on the old table %s' % (fkey[4],fkey[3],  ), 'info')
+					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+					raise
+			except:
+				self.logger.log_message('An generic error occurred during the drop of the foreign key %s on the old table %s' % (fkey[4],fkey[3],  ), 'info')
+				raise			
 	
 	def __validate_fkeys(self, db_handler):
 		"""
@@ -842,6 +848,7 @@ class pg_engine(object):
 				except psycopg2.Error as e:
 					self.logger.log_message("Couldn't validate the foreign key %s on table  %s.%s. %s " % (validate_stat[1],validate_stat[2],validate_stat[3], e,  ), 'warning')
 		self.__update_repack_status(db_handler, 7, "complete")
+		
 	def __create_ref_fkeys(self, db_handler, table):
 		"""
 		The method builds the referencing foreign keys from the existing  to the new table 
