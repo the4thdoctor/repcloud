@@ -719,10 +719,52 @@ class pg_engine(object):
 			db_handler["cursor"].execute(index[0])
 		self.__update_repack_status(db_handler, 3, "complete")
 		
+	def __build_select_list(self, db_handler, table):
+		"""
+			The method builds the select list using the dictionary self.__tables_config to determine whether filter a jsonb field.
+		"""
+		select_list = []
+		insert_list = []
+		table_filter = None
+		sql_get_fields="""
+		SELECT 
+			col_typ_map 
+		FROM 
+			sch_repcloud.v_table_column_types 
+		WHERE 
+				schema_name=%s 
+			AND table_name=%s ;"""
+		db_handler["cursor"].execute(sql_get_fields, (table[1], table[2]))
+		col_typ_map = (db_handler["cursor"].fetchone())[0]
+		try:
+			table_filter=self.__tables_config[table[1]][table[2]]
+			self.logger.log_message('Found filter definition for table %s.%s' % (table[1], table[2],  ), 'debug')
+			print(table_filter)
+		except:
+			self.logger.log_message('There is no filter definition for table %s.%s' % (table[1], table[2],  ), 'debug')
+		
+		for column in col_typ_map:
+			if table_filter:
+				try:
+					col_filter = table_filter[column]
+					if col_typ_map[column] == "jsonb":
+						col_append = "%s -'%s'" % (column, "' -'".join(col_filter["remove_keys"]))
+					else: 
+						self.logger.log_message('The column %s is not jsonb' % (column,  ), 'warning')
+						col_append = column
+				except:
+					col_append = column
+			else:
+				col_append = column
+			select_list.append(col_append)
+			insert_list.append(column)
+		return([insert_list, select_list])
+	
 	def __copy_table_data(self, db_handler, table):
 		"""
 			The method copy the data from the origin's table to the new one
 		"""
+		att_lists = self.__build_select_list(db_handler, table)
 		
 		self.logger.log_message('Creating the logger triggers on the table %s.%s' % (table[1], table[2],  ), 'info')
 		self.__update_repack_status(db_handler, 1, "in progress")
@@ -761,12 +803,12 @@ class pg_engine(object):
 		db_handler["connection"].set_session(autocommit=False)
 		db_handler["cursor"].execute(sql_get_new_tab,  (table[1], table[2], ))
 		new_table = db_handler["cursor"].fetchone()
+		
+		sql_copy = """INSERT INTO sch_repnew.{} (%s) SELECT %s FROM {}.{} ;"""  % (','.join(att_lists[0]), ','.join(att_lists[1]),)
 		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
 		
 		
-		#sql_get_fields="""SELECT col_typ_map FROM sch_repcloud.v_table_column_types WHERE schema_name=%s AND table_name=%s """
-		
-		sql_copy = sql.SQL("INSERT INTO sch_repnew.{} SELECT * FROM {}.{} ;").format(sql.Identifier(new_table[0]),sql.Identifier(table[1]), sql.Identifier(table[2]))
+		sql_copy = sql.SQL(sql_copy).format(sql.Identifier(new_table[0]),sql.Identifier(table[1]), sql.Identifier(table[2]))
 		sql_analyze = sql.SQL("ANALYZE sch_repnew.{};").format(sql.Identifier(new_table[0]))
 		
 		db_handler["cursor"].execute(sql_copy)
