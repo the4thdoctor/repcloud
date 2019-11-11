@@ -721,7 +721,8 @@ class pg_engine(object):
 		
 	def __build_select_list(self, db_handler, table):
 		"""
-			The method builds the select list using the dictionary self.__tables_config to determine whether filter a jsonb field.
+			The method builds the select list using the dictionary self.__tables_config to determine 
+			whether filter a jsonb field or strip null keys from json,jsonb fields.
 		"""
 		select_list = []
 		insert_list = []
@@ -739,7 +740,6 @@ class pg_engine(object):
 		try:
 			table_filter=self.__tables_config[table[1]][table[2]]
 			self.logger.log_message('Found filter definition for table %s.%s' % (table[1], table[2],  ), 'debug')
-			print(table_filter)
 		except:
 			self.logger.log_message('There is no filter definition for table %s.%s' % (table[1], table[2],  ), 'debug')
 		
@@ -747,11 +747,23 @@ class pg_engine(object):
 			if table_filter:
 				try:
 					col_filter = table_filter[column]
-					if col_typ_map[column] == "jsonb":
-						col_append = "%s -'%s'" % (column, "' -'".join(col_filter["remove_keys"]))
-					else: 
-						self.logger.log_message('The column %s is not jsonb' % (column,  ), 'warning')
-						col_append = column
+					if "cleanup_nulls" in col_filter:
+						self.logger.log_message('Found cleanup nulls for field %s table %s.%s' % (column, table[1], table[2],  ), 'debug')
+						if col_filter["cleanup_nulls"]:
+							if col_typ_map[column] == "json":
+								col_append = "json_strip_nulls(%s)" % (column, )
+							elif col_typ_map[column] == "jsonb":
+								col_append = "jsonb_strip_nulls(%s)" % (column, )
+							else:
+								self.logger.log_message("Can't apply the cleanup nulls filter. The column %s is not jsonb or json" % (column,  ), 'warning')
+						else:
+							col_append = column
+					elif "remove_keys" in col_filter:
+						if col_typ_map[column] == "jsonb":
+							col_append = "%s -'%s'" % (column, "' -'".join(col_filter["remove_keys"]))
+						else: 
+							self.logger.log_message('The column %s is not jsonb' % (column,  ), 'warning')
+							col_append = column
 				except:
 					col_append = column
 			else:
@@ -759,6 +771,7 @@ class pg_engine(object):
 			select_list.append(col_append)
 			insert_list.append(column)
 		return([insert_list, select_list])
+		
 	
 	def __copy_table_data(self, db_handler, table):
 		"""
@@ -806,7 +819,6 @@ class pg_engine(object):
 		
 		sql_copy = """INSERT INTO sch_repnew.{} (%s) SELECT %s FROM {}.{} ;"""  % (','.join(att_lists[0]), ','.join(att_lists[1]),)
 		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
-		
 		
 		sql_copy = sql.SQL(sql_copy).format(sql.Identifier(new_table[0]),sql.Identifier(table[1]), sql.Identifier(table[2]))
 		sql_analyze = sql.SQL("ANALYZE sch_repnew.{};").format(sql.Identifier(new_table[0]))
