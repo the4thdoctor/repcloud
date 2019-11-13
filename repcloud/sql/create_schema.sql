@@ -44,6 +44,42 @@ CREATE TABLE t_table_repack
 
 CREATE UNIQUE INDEX uidx_t_table_repack_table_schema ON t_table_repack(v_schema_name,v_old_table_name);
 
+
+CREATE TABLE t_tab_fkeys 
+(
+	i_id_fkey	bigserial,
+	i_id_table	bigint NOT NULL,
+	t_con_create_new text NOT NULL,
+	t_con_validate_new text NOT NULL,
+	t_con_drop_old text NOT NULL,
+	t_con_create_old text NOT NULL,
+	t_con_validate_old text NOT NULL,
+	v_table_name character varying(100) NOT NULL,
+	v_schema_name character varying(100) NOT NULL,
+	v_con_name character varying(100) NOT NULL,
+	CONSTRAINT pk_t_tab_fkeys PRIMARY KEY (i_id_fkey)
+);
+
+
+CREATE TABLE t_tab_ref_fkeys 
+(
+	i_id_fkey	bigserial,
+	i_id_table	bigint NOT NULL,
+	t_con_create_new text NOT NULL,
+	t_con_drop_old text NOT NULL,
+	t_con_create_old text NOT NULL,
+	t_con_validate_old text NOT NULL,
+	t_tab_lock_old text NOT NULL,
+	v_old_ref_table character varying(100) NOT NULL,
+	v_referenced_schema_name character varying(100) NOT NULL,
+	v_schema_name character varying(100) NOT NULL,
+	v_con_name character varying(100) NOT NULL,
+	v_new_ref_table character varying(100) NOT NULL,         
+	v_referencing_table character varying(100) NOT NULL,     
+	v_ref_schema_name character varying(100) NOT NULL,  
+	CONSTRAINT pk_t_tab_ref_fkeys PRIMARY KEY (i_id_fkey)
+);
+
 CREATE TABLE sch_repcloud.t_idx_repack (
 	i_id_index	bigserial,
 	i_id_table	bigint NOT NULL,
@@ -867,6 +903,29 @@ ORDER BY
 	blocking_age DESC
  ;
 
+
+
+  -- View inspired by the pg_repack's virtual transaction query
+  CREATE OR REPLACE VIEW v_virtual_txd AS
+  SELECT 
+  	array_agg(lck.virtualtransaction) AS x_vxids
+  FROM 
+  	pg_catalog.pg_locks lck
+  	LEFT JOIN pg_stat_activity AS act 
+    	ON lck.pid = act.pid 
+    LEFT JOIN pg_database AS dat
+	    ON act.datid = dat.oid 
+  WHERE	
+  		locktype = 'virtualxid' 
+	AND lck.pid NOT IN (pg_backend_pid()) 
+  	AND (lck.virtualxid, lck.virtualtransaction) <> ('1/1', '-1/0')
+	AND (act.application_name IS NULL OR act.application_name NOT like 'repcloud%')
+	AND act.query !~* E'^\\\s*vacuum\\\s+' 
+	AND act.query !~ E'^autovacuum: ' 
+	AND ((dat.datname IS NULL OR dat.datname = current_database()) OR lck.database = 0)
+;
+
+
 CREATE OR REPLACE VIEW v_tab_bloat AS
 SELECT
     v_table,
@@ -1195,15 +1254,17 @@ WHERE
 ;
 
 
-
 CREATE OR REPLACE VIEW v_tab_fkeys AS
 	SELECT DISTINCT
-		format('ALTER TABLE ONLY sch_repnew.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create,
-		format('ALTER TABLE ONLY sch_repnew.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname) AS t_con_validate,
-		format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',rep.v_schema_name,rep.v_old_table_name ,conname) AS t_con_drop,
+		format('ALTER TABLE ONLY sch_repnew.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_new_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create_new,
+		format('ALTER TABLE ONLY sch_repnew.%I VALIDATE CONSTRAINT %I ;',rep.v_new_table_name ,conname) AS t_con_validate_new,
+		format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',rep.v_schema_name,rep.v_old_table_name ,conname) AS t_con_drop_old,
+		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s  NOT VALID ;',rep.v_schema_name,rep.v_old_table_name ,conname,pg_get_constraintdef(con.oid)) AS t_con_create_old,
+		format('ALTER TABLE ONLY %I.%I VALIDATE CONSTRAINT %I ;',rep.v_schema_name,rep.v_old_table_name ,conname) AS t_con_validate_old,
 		tab.relname as v_table_name,
 		sch.nspname as v_schema_name,
-		conname AS v_con_name
+		conname AS v_con_name,
+		rep.i_id_table
 
 	FROM
 		pg_class tab
@@ -1222,25 +1283,26 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 
 
 
-
 CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 	SELECT 
-		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_ref_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create,
+		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_ref_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create_new,
+		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s %I.%I %s NOT VALID ;',v_ref_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_schema_name,v_old_ref_table,t_con_token[3]) AS t_con_create_old,
 		CASE WHEN b_self_referencing
 		THEN
 			'SELECT True;'
 		ELSE
 			format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table ,v_con_name) 
-		END AS t_con_drop,
-		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_con_validate,
-		format('LOCK TABLE  %I.%I IN ACCESS EXCLUSIVE MODE;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_tab_lock,
+		END AS t_con_drop_old,
+		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_con_validate_old,
+		format('LOCK TABLE  %I.%I IN ACCESS EXCLUSIVE MODE;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_tab_lock_old,
 		v_old_ref_table,
 		v_referenced_schema_name,
 		v_schema_name,
 		v_con_name,
 		v_new_ref_table,
 		v_referencing_table,
-		v_ref_schema_name
+		v_ref_schema_name,
+		i_id_table
 	FROM
 		(
 			SELECT 
@@ -1268,7 +1330,8 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 				rep.v_new_table_name AS v_new_ref_table,
 				rep.v_old_table_name AS v_old_ref_table,
 				rep.v_schema_name AS v_referenced_schema_name,
-				con.conrelid=con.confrelid AS b_self_referencing
+				con.conrelid=con.confrelid AS b_self_referencing,
+				rep.i_id_table
 			
 			FROM
 			pg_class tab
