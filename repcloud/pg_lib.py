@@ -54,12 +54,11 @@ class pg_engine(object):
 		pgsql_conn = psycopg2.connect(strconn)
 		pgsql_conn.set_session(autocommit=True)
 		pgsql_cur = pgsql_conn .cursor()
-		pgsql_cur.execute('SELECT pg_backend_pid();')
-		backend_pid = pgsql_cur.fetchone()
+		backend_pid = pgsql_conn.get_backend_pid()
 		db_handler = {}
 		db_handler["connection"] = pgsql_conn
 		db_handler["cursor"] = pgsql_cur
-		db_handler["pid"] = backend_pid[0]
+		db_handler["pid"] = backend_pid
 		return db_handler
 		
 
@@ -484,6 +483,7 @@ class pg_engine(object):
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
 			remaining_rows = db_handler["cursor"].fetchone()
 			if final_replay and remaining_rows[0]:
+				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
 				queue["out"].put(True)
 				break
 			elif remaining_rows[0]<int(max_replay_rows):
@@ -491,11 +491,31 @@ class pg_engine(object):
 				queue["out"].put(True)
 				self.logger.log_message('Waiting for the final replay signal.' , 'info')
 				final_replay = queue["in"].get()
+				backend_invoker = final_replay
 				self.logger.log_message('Starting the final replay.' , 'info')
 			else:
 				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
 		
 		self.logger.log_message('End of the replay loop.' , 'info')
+		self.logger.log_message('Start of the watchdog loop.' , 'info')
+		sql_cancel = """
+		SELECT 
+			blocking_pid,
+			cancel_statement,
+			terminate_statement 
+		FROM 
+			sch_repcloud.v_blocking_pids vbp 
+		WHERE 
+			blocked_pid=%s
+		;
+		"""
+		while True:
+			db_handler["cursor"].execute(sql_cancel,  (backend_invoker,  ))
+			blocking_processes = db_handler["cursor"].fetchall()
+			if len(blocking_processes)>0:
+				self.logger.log_message('Potential deadlock detected. Cancelling the blocking queries.' , 'warn')
+				for blk_proc in blocking_processes:
+					db_handler["cursor"].execute(blk_proc[1])
 		self.__disconnect_db(db_handler)
 		
 	def __get_vxid(self, db_handler):
@@ -685,121 +705,124 @@ class pg_engine(object):
 		try_swap = queue["out"].get()
 		
 		if try_swap:
-			
-			self.__update_repack_status(db_handler, 5, "in progress")
-			# set the lock_timeout we don't want to keep the other sessions lock in wait more than necessary
-			db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
-			#set the autocommit off as we want to rollback safely in case of failure
-			db_handler["connection"].set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE, autocommit=False)
-			
-			
-			
-			try:
-				vxid = self.__get_vxid(db_handler)
-				self.__wait_for_vxid(db_handler, vxid)
-				# try to acquire an exclusive lock on the repacked table
-				self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
-				db_handler["cursor"].execute(sql_lock_table)
+			while True:
+				self.__update_repack_status(db_handler, 5, "in progress")
+				# set the lock_timeout we don't want to keep the other sessions lock in wait more than necessary
+				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
+				#set the autocommit off as we want to rollback safely in case of failure
+				db_handler["connection"].set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE, autocommit=False)
 				
-				for reftab in lock_ref_stat:
-					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (reftab[1], reftab[2],  ), 'info')
-					db_handler["cursor"].execute(reftab[0])
-				queue["in"].put(True)
-				can_swap = queue["out"].get()
 				
-				if can_swap:
+				
+				try:
+					vxid = self.__get_vxid(db_handler)
+					self.__wait_for_vxid(db_handler, vxid)
+					# try to acquire an exclusive lock on the repacked table
+					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
+					db_handler["cursor"].execute(sql_lock_table)
 					
-					#determine which sequences are attached to the original table and reset the same on the new table in order to make them work properly after the swap
-					db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
-					reset_sequence = db_handler["cursor"].fetchone()
-					if reset_sequence:
-						self.logger.log_message("resetting sequence on new table" , 'debug')
-						db_handler["cursor"].execute(reset_sequence[0])	
+					#for reftab in lock_ref_stat:
+					#	self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (reftab[1], reftab[2],  ), 'info')
+					#	db_handler["cursor"].execute(reftab[0])
+					queue["in"].put(db_handler["pid"])
+					can_swap = queue["out"].get()
 					
-					# create the new table's foreign keys 
-					self.__create_tab_fkeys(db_handler, table)
-					self.__create_ref_fkeys(db_handler, table)
-					
-					tswap = table_swap[0]
-					self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
-					db_handler["cursor"].execute(tswap[0])		
-					self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
-					db_handler["cursor"].execute(tswap[1])	
-					self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
-					db_handler["cursor"].execute(tswap[2])	
-					
-					#drop the views referencing the original table
-					if view_drop:
-						self.logger.log_message("dropping the views referencing the table ", 'debug')
-						for view in view_drop:
-							self.logger.log_message("drop view %s" % (view[0]), 'debug')
-							db_handler["cursor"].execute(view[1])		
-						for view in view_create:
-							self.logger.log_message("create view %s" % (view[0]), 'debug')
-							db_handler["cursor"].execute(view[1])		
-					#remove the logging triggers from the original table
-					self.logger.log_message("Dropping the logging triggers", 'info')
-					db_handler["cursor"].execute(sql_drop_trg)
-					
-					#remove the log table
-					sql_drop_log_table = sql_drop_log_table % tswap[11]
-					self.logger.log_message("Dropping the log table ", 'info')
-					db_handler["cursor"].execute(sql_drop_log_table)
-					
-					#remove the old table
-					self.logger.log_message("Dropping the old table", 'info')
-					db_handler["cursor"].execute(sql_drop_old_table)
-					
+					if can_swap:
+						
+						#determine which sequences are attached to the original table and reset the same on the new table in order to make them work properly after the swap
+						db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
+						reset_sequence = db_handler["cursor"].fetchone()
+						if reset_sequence:
+							self.logger.log_message("resetting sequence on new table" , 'debug')
+							db_handler["cursor"].execute(reset_sequence[0])	
+						
+						# create the new table's foreign keys 
+						self.__create_tab_fkeys(db_handler, table)
+						self.__create_ref_fkeys(db_handler, table)
+						
+						tswap = table_swap[0]
+						self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
+						db_handler["cursor"].execute(tswap[0])		
+						self.logger.log_message("Rename new table: %s" %tswap[1], 'debug')
+						db_handler["cursor"].execute(tswap[1])	
+						self.logger.log_message("change schema new table: %s" %tswap[2], 'debug')
+						db_handler["cursor"].execute(tswap[2])	
+						
+						#drop the views referencing the original table
+						if view_drop:
+							self.logger.log_message("dropping the views referencing the table ", 'debug')
+							for view in view_drop:
+								self.logger.log_message("drop view %s" % (view[0]), 'debug')
+								db_handler["cursor"].execute(view[1])		
+							for view in view_create:
+								self.logger.log_message("create view %s" % (view[0]), 'debug')
+								db_handler["cursor"].execute(view[1])		
+						#remove the logging triggers from the original table
+						self.logger.log_message("Dropping the logging triggers", 'info')
+						db_handler["cursor"].execute(sql_drop_trg)
+						
+						#remove the log table
+						sql_drop_log_table = sql_drop_log_table % tswap[11]
+						self.logger.log_message("Dropping the log table ", 'info')
+						db_handler["cursor"].execute(sql_drop_log_table)
+						
+						#remove the old table
+						self.logger.log_message("Dropping the old table", 'info')
+						db_handler["cursor"].execute(sql_drop_old_table)
+						
 
-					
-					#commit the swap
-					db_handler["connection"].commit()
-					
-					
-				else:
-					# if we have too many rows when the lock is acquired we give up and continue the replay
-					self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
-					continue_replay = True
-					db_handler["connection"].rollback() 
-					self.__update_repack_status(db_handler, 4,  "in progress")
-					db_handler["connection"].commit() 
-			
-			#exception handling
-			except psycopg2.Error as e:
-				#deadlock during the swap
-				if e.pgcode == '40P01':
-					self.logger.log_message('Deadlock detected during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
-				#lock not available
-				elif e.pgcode == '55P03':
-					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+						
+						#commit the swap
+						db_handler["connection"].commit()
+						#terminate the replay daemon
+						replay_daemon.terminate()
+						#exit the loop
+						break
+						
+					else:
+						# if we have too many rows when the lock is acquired we give up and continue the replay
+						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
+						continue_replay = True
+						db_handler["connection"].rollback() 
+						self.__update_repack_status(db_handler, 4,  "in progress")
+						db_handler["connection"].commit() 
 				
-				#anything else related with psycopg2
-				else:
-					self.logger.log_message('An error occurred during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
-					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
-				
-				#this section is to manage the risk of having the session killed by the deadlock esolution
-				if  db_handler["connection"].closed:
-					#we mark the repack as failed and then we remove the table's copy and the logging triggers
-					self.logger.log_message('The connection is no longer active, trying to reconnect.' , 'info')
-					db_handler = self.__connect_db(self.connections[con])
-					self.__remove_table_repack(db_handler, table, con)
-					self.__update_repack_status(db_handler, 5, "failed")
-				else:
-					#if the session is still active we can continue to try the swap
-					self.logger.log_message('The connection is still active, continuing.' , 'info')
-					#we rollback the swap then we reset the session's autocommit and lock timeout
-					db_handler["connection"].rollback()
-					db_handler["connection"].set_session(isolation_level=None, autocommit=True)
-					db_handler["cursor"].execute(sql_reset_lock_timeout )
-					#we turn on the continue_replay so we can continue to replay the rows in the next iteration
-					continue_replay = True
-					self.__update_repack_status(db_handler, 4,  "in progress")
-				try_swap  = False
-			except:
-				#for any other error we raise an exception
-				try_swap  = False
-				raise
+				#exception handling
+				except psycopg2.Error as e:
+					#deadlock during the swap
+					if e.pgcode == '40P01':
+						self.logger.log_message('Deadlock detected during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+					#lock not available
+					elif e.pgcode == '55P03':
+						self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+					
+					#anything else related with psycopg2
+					else:
+						self.logger.log_message('An error occurred during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
+						self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+					
+					#this section is to manage the risk of having the session killed by the deadlock esolution
+					if  db_handler["connection"].closed:
+						#we mark the repack as failed and then we remove the table's copy and the logging triggers
+						self.logger.log_message('The connection is no longer active, trying to reconnect.' , 'info')
+						db_handler = self.__connect_db(self.connections[con])
+						self.__remove_table_repack(db_handler, table, con)
+						self.__update_repack_status(db_handler, 5, "failed")
+					else:
+						#if the session is still active we can continue to try the swap
+						self.logger.log_message('The connection is still active, continuing.' , 'info')
+						#we rollback the swap then we reset the session's autocommit and lock timeout
+						db_handler["connection"].rollback()
+						db_handler["connection"].set_session(isolation_level=None, autocommit=True)
+						db_handler["cursor"].execute(sql_reset_lock_timeout )
+						#we turn on the continue_replay so we can continue to replay the rows in the next iteration
+						continue_replay = True
+						self.__update_repack_status(db_handler, 4,  "in progress")
+					try_swap  = False
+				except:
+					#for any other error we raise an exception
+					try_swap  = False
+					raise
 			# at the end of the swap we reset the autocommit status and  the lock timeout
 			db_handler["connection"].set_session(isolation_level=None,autocommit=True)
 			db_handler["cursor"].execute(sql_reset_lock_timeout )
