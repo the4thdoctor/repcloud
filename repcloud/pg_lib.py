@@ -421,6 +421,7 @@ class pg_engine(object):
 		"""
 		max_replay_rows = self.connections[con]["max_replay_rows"]
 		check_time = int(self.connections[con]["check_time"])
+		
 
 		sql_get_mod_tuples = """
 			SELECT
@@ -472,9 +473,11 @@ class pg_engine(object):
 		The method performs a replay on the specified table using the connection parameters.
 		The method creates a new database connection for performing its task.
 		The mp queue is used to communicate with the invoking method.
+		After the replay the method checks for potential deadlocks and acts according to the strategy set in the parameter deadlock_resolution.
 		"""
 		final_replay = False
 		max_replay_rows = self.connections[con]["max_replay_rows"]
+		deadlock_resolution = self.connections[con]["deadlock_resolution"]
 		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s);"""
 		db_handler = self.__connect_db(self.connections[con])
 
@@ -513,9 +516,22 @@ class pg_engine(object):
 			db_handler["cursor"].execute(sql_cancel,  (backend_invoker,  ))
 			blocking_processes = db_handler["cursor"].fetchall()
 			if len(blocking_processes)>0:
-				self.logger.log_message('Potential deadlock detected. Cancelling the blocking queries.' , 'warn')
-				for blk_proc in blocking_processes:
-					db_handler["cursor"].execute(blk_proc[1])
+				self.logger.log_message('Potential deadlock detected. Process %s cannot proceed with the table swap.' % (backend_invoker, ) , 'debug')
+				if deadlock_resolution == "nothing":
+					self.logger.log_message("Deadlock resolution set to nothing. Waiting for the database's deadlock resolution." , 'warning')
+					break
+				else:
+					if deadlock_resolution== "cancel_query":
+						self.logger.log_message('Cancelling the locking queries.' , 'debug')
+						stat_id = 1
+					elif deadlock_resolution== "kill_query":
+						self.logger.log_message('Terminating the locking queries.' , 'debug')
+						stat_id = 2
+					for blk_proc in blocking_processes:
+						try:
+							db_handler["cursor"].execute(blk_proc[stat_id])
+						except:
+							self.logger.log_message("Couldn't cancel or terminate the query with pid %s." % (blk_proc[stat_id], ) , 'error')
 		self.__disconnect_db(db_handler)
 		
 	def __get_vxid(self, db_handler):
@@ -701,11 +717,17 @@ class pg_engine(object):
 		queue["out"] = mp.Queue()
 		watchdog_daemon = mp.Process(target=self.__watchdog, name='replay_process', daemon=True, args=(table, con, queue,))
 		watchdog_daemon.start()
-		self.logger.log_message('Waiting for the can swap signal.' , 'info')
-		try_swap = queue["out"].get()
-		
-		if try_swap:
-			while True:
+		while True:
+			if not watchdog_daemon.is_alive():
+				queue = {}
+				queue["in"] = mp.Queue()
+				queue["out"] = mp.Queue()
+				watchdog_daemon = mp.Process(target=self.__watchdog, name='replay_process', daemon=True, args=(table, con, queue,))
+				watchdog_daemon.start()
+				time.sleep(1)
+			self.logger.log_message('Waiting for the can swap signal.' , 'info')
+			try_swap = queue["out"].get()
+			if try_swap:
 				self.__update_repack_status(db_handler, 5, "in progress")
 				# set the lock_timeout we don't want to keep the other sessions lock in wait more than necessary
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
@@ -809,7 +831,6 @@ class pg_engine(object):
 						db_handler["connection"].set_session(isolation_level=None, autocommit=True)
 						db_handler["cursor"].execute(sql_reset_lock_timeout )
 						#we turn on the continue_replay so we can continue to replay the rows in the next iteration
-						continue_replay = True
 						self.__update_repack_status(db_handler, 4,  "in progress")
 					try_swap  = False
 				except:
@@ -817,10 +838,9 @@ class pg_engine(object):
 					try_swap  = False
 					raise
 			# at the end of the swap we reset the autocommit status and  the lock timeout
-			db_handler["connection"].set_session(isolation_level=None,autocommit=True)
-			db_handler["cursor"].execute(sql_reset_lock_timeout )
-			self.__update_repack_status(db_handler, 5, "complete")
-			
+		db_handler["connection"].set_session(isolation_level=None,autocommit=True)
+		db_handler["cursor"].execute(sql_reset_lock_timeout )
+		self.__update_repack_status(db_handler, 5, "complete")
 				
 		
 	def __create_indices(self, db_handler, table):
