@@ -467,7 +467,7 @@ class pg_engine(object):
 			return False
 			
 	
-	def __replay_mp(self, table, con, queue):
+	def __watchdog(self, table, con, queue):
 		"""
 		The method performs a replay on the specified table using the connection parameters.
 		The method creates a new database connection for performing its task.
@@ -693,14 +693,14 @@ class pg_engine(object):
 		#check how many rows we should replay
 		sql_check_rows = sql_check_rows % table_swap[0][11]
 		
-		db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
-		lock_ref_stat = db_handler["cursor"].fetchall()
+		#db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
+		#lock_ref_stat = db_handler["cursor"].fetchall()
 		self.__update_repack_status(db_handler, 4, "in progress")
 		queue = {}
 		queue["in"] = mp.Queue()
 		queue["out"] = mp.Queue()
-		replay_daemon = mp.Process(target=self.__replay_mp, name='replay_process', daemon=True, args=(table, con, queue,))
-		replay_daemon .start()
+		watchdog_daemon = mp.Process(target=self.__watchdog, name='replay_process', daemon=True, args=(table, con, queue,))
+		watchdog_daemon.start()
 		self.logger.log_message('Waiting for the can swap signal.' , 'info')
 		try_swap = queue["out"].get()
 		
@@ -775,17 +775,10 @@ class pg_engine(object):
 						#commit the swap
 						db_handler["connection"].commit()
 						#terminate the replay daemon
-						replay_daemon.terminate()
+						time.sleep(1)
+						watchdog_daemon.terminate()
 						#exit the loop
 						break
-						
-					else:
-						# if we have too many rows when the lock is acquired we give up and continue the replay
-						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
-						continue_replay = True
-						db_handler["connection"].rollback() 
-						self.__update_repack_status(db_handler, 4,  "in progress")
-						db_handler["connection"].commit() 
 				
 				#exception handling
 				except psycopg2.Error as e:
