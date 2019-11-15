@@ -1,6 +1,6 @@
 import psycopg2
 from psycopg2 import sql
-#from psycopg2.extras import RealDictCursor
+import multiprocessing as mp
 import sys
 import os
 import time
@@ -20,11 +20,12 @@ class pg_engine(object):
 		# repack_step 0 to 8, each step may be resumed
 		self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
 		self.__application_name = "repcloud - Table: %s [%s] "
+		
 	def __check_replica_schema(self, db_handler):
 		"""
-		The method checks if the sch_chameleon exists
+		The method checks if the sch_repcloud exists
 		
-		:return: count from information_schema.schemata
+		:return: count from pg_namespace
 		:rtype: integer
 		"""
 		sql_check="""
@@ -53,12 +54,11 @@ class pg_engine(object):
 		pgsql_conn = psycopg2.connect(strconn)
 		pgsql_conn.set_session(autocommit=True)
 		pgsql_cur = pgsql_conn .cursor()
-		pgsql_cur.execute('SELECT pg_backend_pid();')
-		backend_pid = pgsql_cur.fetchone()
+		backend_pid = pgsql_conn.get_backend_pid()
 		db_handler = {}
 		db_handler["connection"] = pgsql_conn
 		db_handler["cursor"] = pgsql_cur
-		db_handler["pid"] = backend_pid[0]
+		db_handler["pid"] = backend_pid
 		return db_handler
 		
 
@@ -231,7 +231,84 @@ class pg_engine(object):
 								fillfactor = self.__storage_params[table[1]][table[2]]["fillfactor"]
 		
 		return fillfactor
-		
+	
+	def __get_foreign_keys(self, db_handler):
+		"""
+		Updates the foreign keys in the table 
+		"""
+		sql_clean_fkeys  = """ DELETE FROM  sch_repcloud.t_tab_fkeys  WHERE i_id_table=%s;"""
+		sql_get_fkeys = """INSERT INTO sch_repcloud.t_tab_fkeys 
+				(
+					i_id_table,
+					t_con_create_new,
+					t_con_validate_new,
+					t_con_drop_old,
+					t_con_create_old,
+					t_con_validate_old,
+					v_table_name,
+					v_schema_name,
+					v_con_name
+				) 
+			SELECT
+				i_id_table,
+				t_con_create_new,
+				t_con_validate_new,
+				t_con_drop_old,
+				t_con_create_old,
+				t_con_validate_old,
+				v_table_name,
+				v_schema_name,
+				v_con_name
+			FROM sch_repcloud.v_tab_fkeys vtf
+			WHERE 
+				i_id_table=%s;
+			"""
+			
+		sql_clean_ref_fkeys  = """ DELETE FROM  sch_repcloud.t_tab_ref_fkeys  WHERE i_id_table=%s;"""
+		sql_get_ref_fkeys="""
+		INSERT INTO sch_repcloud.t_tab_ref_fkeys 
+		(
+			i_id_table,
+			t_con_create_new,
+			t_con_drop_old,
+			t_con_create_old,
+			t_con_validate_old,
+			t_tab_lock_old,
+			v_old_ref_table,
+			v_referenced_schema_name,
+			v_schema_name,           
+			v_con_name,              
+			v_new_ref_table,         
+			v_referencing_table,     
+			v_ref_schema_name            
+
+		)
+
+		SELECT 
+			i_id_table,
+			t_con_create_new,
+			t_con_drop_old,
+			t_con_create_old,
+			t_con_validate_old,
+			t_tab_lock_old,
+			v_old_ref_table,
+			v_referenced_schema_name,
+			v_schema_name,           
+			v_con_name,              
+			v_new_ref_table,         
+			v_referencing_table,     
+			v_ref_schema_name       
+		FROM
+			sch_repcloud.v_tab_ref_fkeys
+		WHERE 
+				i_id_table=%s;
+		;
+		"""
+		db_handler["cursor"].execute(sql_clean_fkeys,  (self.__id_table, ))
+		db_handler["cursor"].execute(sql_get_fkeys,  (self.__id_table, ))
+		db_handler["cursor"].execute(sql_clean_ref_fkeys,  (self.__id_table, ))
+		db_handler["cursor"].execute(sql_get_ref_fkeys,  (self.__id_table, ))
+	
 	def __create_new_table(self, db_handler, table):
 		"""
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
@@ -247,6 +324,7 @@ class pg_engine(object):
 		self.__update_repack_status(db_handler, 0, "in progress")
 		db_handler["cursor"].execute(sql_create_log,  (table[1], table[2], ))
 		self.__update_repack_status(db_handler, 0, "complete")
+		self.__get_foreign_keys(db_handler)
 		
 	def __create_pkey(self, db_handler, table):
 		"""
@@ -343,6 +421,7 @@ class pg_engine(object):
 		"""
 		max_replay_rows = self.connections[con]["max_replay_rows"]
 		check_time = int(self.connections[con]["check_time"])
+		
 
 		sql_get_mod_tuples = """
 			SELECT
@@ -387,77 +466,152 @@ class pg_engine(object):
 		else:
 			self.logger.log_message('The replay rate on %s.%s is not sufficient to reach the consistent status. Aborting the repack.' % (table[1], table[2],  ), 'info')
 			return False
-			
 	
+	def __replay_data(self, table, con, queue):
+		"""
+		The method performs a replay on the specified table using the connection parameters.
+		The method creates a new database connection for performing its task.
+		The mp queue is used to communicate with the invoking method.
+		"""
+		final_replay = False
+		max_replay_rows = self.connections[con]["max_replay_rows"]
+		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s);"""
+		db_handler = self.__connect_db(self.connections[con])
+
+		self.logger.log_message('Starting the replay loop.' , 'info')
+		while True:
+			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows  ))
+			remaining_rows = db_handler["cursor"].fetchone()
+			if final_replay and remaining_rows[0]==0:
+				self.logger.log_message('All rows replayed. Authorising the swap.', 'debug')
+				queue.put(True)
+				break
+			elif remaining_rows[0]<int(max_replay_rows):
+				self.logger.log_message('Ready for swap, signalling we can go for the final replay.' , 'info')
+				queue.put(True)
+				self.logger.log_message('Waiting for the final replay signal.' , 'info')
+				final_replay = queue.get()
+				self.logger.log_message('Starting the final replay.' , 'info')
+			else:
+				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
+		
+		
+		self.logger.log_message('End of the replay loop.' , 'info')
+		self.__disconnect_db(db_handler)
+	
+	def __watchdog(self, table, con, pid_swap ):
+		"""
+		The method checks for potential deadlocks and acts according to the strategy set in the parameter deadlock_resolution.
+		"""
+		deadlock_resolution = self.connections[con]["deadlock_resolution"]
+		db_handler = self.__connect_db(self.connections[con])
+
+		self.logger.log_message('Start of the watchdog loop.' , 'info')
+		sql_cancel = """
+		SELECT 
+			blocking_pid,
+			cancel_statement,
+			terminate_statement 
+		FROM 
+			sch_repcloud.v_blocking_pids vbp 
+		WHERE 
+			blocked_pid=%s
+		;
+		"""
+		while True:
+			db_handler["cursor"].execute(sql_cancel,  (pid_swap,  ))
+			blocking_processes = db_handler["cursor"].fetchall()
+			if len(blocking_processes)>0:
+				self.logger.log_message('Potential deadlock detected. Process %s cannot proceed with the table swap.' % (pid_swap, ) , 'debug')
+				if deadlock_resolution == "nothing":
+					self.logger.log_message("Deadlock resolution set to nothing. Waiting for the database's deadlock resolution." , 'warning')
+					break
+				else:
+					if deadlock_resolution== "cancel_query":
+						self.logger.log_message('Cancelling the locking queries.' , 'debug')
+						stat_id = 1
+					elif deadlock_resolution== "kill_query":
+						self.logger.log_message('Terminating the locking queries.' , 'debug')
+						stat_id = 2
+					for blk_proc in blocking_processes:
+						try:
+							db_handler["cursor"].execute(blk_proc[stat_id])
+						except:
+							self.logger.log_message("Couldn't cancel or terminate the query with pid %s." % (blk_proc[stat_id], ) , 'error')
+		self.__disconnect_db(db_handler)
+		
+	def __get_vxid(self, db_handler):
+		"""
+		Get the virtual transaction id active at the moment of the query
+		"""
+		sql_get_virtual_xid = """SELECT x_vxids FROM sch_repcloud.v_virtual_txd ; """
+		db_handler["cursor"].execute(sql_get_virtual_xid)
+		vxid = db_handler["cursor"].fetchone()[0]
+		return vxid
+	
+	def __wait_for_vxid(self, db_handler, vxid):
+		"""
+		Waits for the virtual transaction id active at the moment of the query to commit
+		"""
+		sql_get_xid_alive = """SELECT pid FROM pg_locks WHERE locktype = 'virtualxid' AND pid <> pg_backend_pid() AND virtualtransaction = ANY(%s)"""
+		while True:
+			db_handler["cursor"].execute(sql_get_xid_alive, (vxid, ))
+			xid_alive = db_handler["cursor"].fetchall()
+			self.logger.log_message('Waiting for %s transactions to finish' % (len(xid_alive),  ), 'info')
+			time.sleep(1)
+			if len(xid_alive)==0:
+				break
+		
 	def __swap_tables(self, db_handler, table, con):
 		"""
 		The method replays the table's data then tries to swap the origin table with the new one
 		"""
-		#set continue replay to true. we replay the data until at most max_replay_rows are left
-		continue_replay = True
-		
-		max_replay_rows = self.connections[con]["max_replay_rows"]
 		lock_timeout = self.connections[con]["lock_timeout"]
 		
 		#define the SQL statements required for the swap
 		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
 		sql_lock_table = """LOCK TABLE "%s"."%s" IN ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
-		sql_replay_data = """
-			SELECT sch_repcloud.fn_replay_change(%s,%s,%s);
-		"""
 		
-		sql_update_sync_xid="""
-			UPDATE sch_repcloud.t_table_repack tlog 
-				SET
-					xid_sync_end=txid_current()
-			WHERE
-					v_schema_name=%s
-				AND	v_old_table_name=%s
-			;
-		"""
 		
 		sql_seq = """
 			SELECT 
 				format(
-					'SELECT setval(''%%I.%%I''::regclass,(SELECT max(%%I) FROM %%s));',
+					'SELECT setval(''%%I.%%I''::regclass,%%L);',
 					nspname,
 					refname,
-					secatt,
-					seqtab
+					(last_value+(increment_by*cache_size))
 				)
+				
+				
 			FROM
 			(
 				SELECT 
 					secatt,
 					refname,
 					nspname,
-					ser.refobjid::regclass::TEXT AS seqtab
+					ser.refobjid::regclass::TEXT AS seqtab,
+					seq.increment_by,
+					seq.cache_size,
+					seq.last_value,
+					nt.i_id_table
+					
 				FROM 
 					sch_repcloud.v_serials ser
 					INNER JOIN sch_repcloud.t_table_repack nt
 					ON ser.refobjid=nt.oid_new_table
-				WHERE 
-						
-						nt.v_schema_name=%s
-					AND nt.v_old_table_name=%s
+					INNER JOIN pg_sequences seq 
+					ON 
+							seq.schemaname=nt.v_schema_name 
+						AND seq.sequencename=ser.refname
+				
 			) setv 	
+			WHERE 
+				i_id_table=%s
 			;
-
 		"""
 		
-		sql_lock_ref_tables = """
-			SELECT 
-				t_tab_lock,
-				v_schema_name,
-				v_referencing_table
-			FROM 
-				sch_repcloud.v_tab_ref_fkeys
-			WHERE 
-					v_referenced_schema_name=%s
-				AND	v_old_ref_table=%s
-
-		"""
+		
 		sql_swap = """
 			SELECT 
 				format('ALTER TABLE %%I.%%I SET SCHEMA sch_repdrop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
@@ -554,54 +708,50 @@ class pg_engine(object):
 		
 		#check how many rows we should replay
 		sql_check_rows = sql_check_rows % table_swap[0][11]
-		db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
-		self.__update_repack_status(db_handler, 4, "in progress")
 		
-		#replay loop this will continue until there are more rows to replay than max_replay_rows
-		while continue_replay :
-			self.logger.log_message('Replaying the data on table %s.%s max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
-			#check if we can try the swap 
-			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
-			last_replay = db_handler["cursor"].fetchone()
-			try_swap = int(last_replay[0])<int(max_replay_rows)
-			
-			
+		#db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
+		#lock_ref_stat = db_handler["cursor"].fetchall()
+		self.__update_repack_status(db_handler, 4, "in progress")
+		queue = mp.Queue()
+		replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
+		replay_daemon.start()
+		while True:
+			if not replay_daemon.is_alive():
+				queue = None
+				queue = mp.Queue()
+				replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
+				replay_daemon.start()
+				time.sleep(1)
+			self.logger.log_message('Waiting for the can swap signal.' , 'info')
+			try_swap = queue.get()
 			if try_swap:
-				
 				self.__update_repack_status(db_handler, 5, "in progress")
 				# set the lock_timeout we don't want to keep the other sessions lock in wait more than necessary
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
 				#set the autocommit off as we want to rollback safely in case of failure
-				db_handler["connection"].set_session(autocommit=False)
+				db_handler["connection"].set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE, autocommit=False)
+				
+				
 				
 				try:
+					vxid = self.__get_vxid(db_handler)
+					self.__wait_for_vxid(db_handler, vxid)
 					# try to acquire an exclusive lock on the repacked table
 					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
 					db_handler["cursor"].execute(sql_lock_table)
+					self.logger.log_message('Starting the watchdog process', 'info')
+					watchdog_daemon = mp.Process(target=self.__watchdog, name='watchdog_process', daemon=True, args=(table, con, db_handler["pid"] ,))
+					watchdog_daemon.start()
 					
-					#final check that we still have a reasonable amount of rows to replay
-					self.logger.log_message('Lock  acquired, checking if we still have a reasonable amount of rows to replay.',  'info')
-					db_handler["cursor"].execute(sql_check_rows,  (table[1], table[2],  ))
-					last_replay = db_handler["cursor"].fetchone()
-					can_swap = int(last_replay[0])<int(max_replay_rows)
+					queue.put(True)
+					time.sleep(1)
+					self.logger.log_message('Waiting for the final replay to complete.', 'info')
+					can_swap = queue.get()
 					
 					if can_swap:
 						
-						self.logger.log_message('Found %s rows left for replay. Starting the swap.' % last_replay[0],  'info')
-						#turning off the continue_replay so we exit the loop if the swap succeeds 
-						continue_replay = False
-						#turning on run_last_replay to ensure we replay all the remaining rows
-						run_last_replay = True
-						while run_last_replay:
-							self.logger.log_message('Replaying the last bunch of data data on table %s.%s  max replay rows per run: %s' % (table[1], table[2],max_replay_rows  ), 'info')
-							db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
-							last_replay = db_handler["cursor"].fetchone()
-							run_last_replay = int(last_replay[0])>0
-						#update the table's statistics with the end of sync xid
-						db_handler["cursor"].execute(sql_update_sync_xid,  (table[1], table[2],  ))
-						
 						#determine which sequences are attached to the original table and reset the same on the new table in order to make them work properly after the swap
-						db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
+						db_handler["cursor"].execute(sql_seq,  (self.__id_table, ))
 						reset_sequence = db_handler["cursor"].fetchone()
 						if reset_sequence:
 							self.logger.log_message("resetting sequence on new table" , 'debug')
@@ -610,6 +760,7 @@ class pg_engine(object):
 						# create the new table's foreign keys 
 						self.__create_tab_fkeys(db_handler, table)
 						self.__create_ref_fkeys(db_handler, table)
+						
 						tswap = table_swap[0]
 						self.logger.log_message("change schema old table: %s" %tswap[0], 'debug')
 						db_handler["cursor"].execute(tswap[0])		
@@ -627,6 +778,7 @@ class pg_engine(object):
 							for view in view_create:
 								self.logger.log_message("create view %s" % (view[0]), 'debug')
 								db_handler["cursor"].execute(view[1])		
+						
 						#remove the logging triggers from the original table
 						self.logger.log_message("Dropping the logging triggers", 'info')
 						db_handler["cursor"].execute(sql_drop_trg)
@@ -643,12 +795,16 @@ class pg_engine(object):
 						#commit the swap
 						db_handler["connection"].commit()
 						
-					else:
-						# if we have too many rows when the lock is acquired we give up and continue the replay
-						self.logger.log_message('Found %s rows left for replay. Giving up the swap and resuming the replay.' % last_replay[0],  'info')
-						continue_replay = True
-						db_handler["connection"].rollback() 
-						self.__update_repack_status(db_handler, 4,  "in progress")
+						#terminating the watchdog
+						watchdog_daemon.terminate()
+						
+						#wait for the the replay daemon to terminate
+						while replay_daemon.is_alive():
+							self.logger.log_message("Waiting for the replay daemon to complete", 'info')
+							time.sleep(1)
+						
+						#exit the loop
+						break
 				
 				#exception handling
 				except psycopg2.Error as e:
@@ -676,21 +832,19 @@ class pg_engine(object):
 						self.logger.log_message('The connection is still active, continuing.' , 'info')
 						#we rollback the swap then we reset the session's autocommit and lock timeout
 						db_handler["connection"].rollback()
-						db_handler["connection"].set_session(autocommit=True)
+						db_handler["connection"].set_session(isolation_level=None, autocommit=True)
 						db_handler["cursor"].execute(sql_reset_lock_timeout )
 						#we turn on the continue_replay so we can continue to replay the rows in the next iteration
-						continue_replay = True
 						self.__update_repack_status(db_handler, 4,  "in progress")
 					try_swap  = False
 				except:
-					#for any other error we lraise an exception
+					#for any other error we raise an exception
 					try_swap  = False
 					raise
-				# at the end of the swap we reset the autocommit status and  the lock timeout
-				db_handler["connection"].set_session(autocommit=True)
-				db_handler["cursor"].execute(sql_reset_lock_timeout )
-				self.__update_repack_status(db_handler, 5, "complete")
-				
+			# at the end of the swap we reset the autocommit status and  the lock timeout
+		db_handler["connection"].set_session(isolation_level=None,autocommit=True)
+		db_handler["cursor"].execute(sql_reset_lock_timeout )
+		self.__update_repack_status(db_handler, 5, "complete")
 				
 		
 	def __create_indices(self, db_handler, table):
@@ -793,7 +947,7 @@ class pg_engine(object):
 		
 		sql_create_truncate_trigger = """
 			CREATE TRIGGER z_repcloud_truncate
-			AFTER TRUNCATE ON %s.%s
+			BEFORE TRUNCATE ON %s.%s
 			FOR EACH STATEMENT
 			EXECUTE PROCEDURE sch_repcloud.fn_log_truncate()
 			;
@@ -805,7 +959,7 @@ class pg_engine(object):
 		
 		sql_get_new_tab = """
 			UPDATE sch_repcloud.t_table_repack 
-			SET xid_copy_start=txid_current()
+			SET xid_copy_start=split_part(txid_current_snapshot()::text,':',1)::bigint
 			WHERE 
 					
 					v_schema_name=%s
@@ -813,7 +967,9 @@ class pg_engine(object):
 			RETURNING v_new_table_name 
 			;
 		"""
-		db_handler["connection"].set_session(autocommit=False)
+		db_handler["connection"].set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE, autocommit=False)
+		vxid = self.__get_vxid(db_handler)
+		self.__wait_for_vxid(db_handler, vxid)
 		db_handler["cursor"].execute(sql_get_new_tab,  (table[1], table[2], ))
 		new_table = db_handler["cursor"].fetchone()
 		
@@ -825,7 +981,7 @@ class pg_engine(object):
 		
 		db_handler["cursor"].execute(sql_copy)
 		db_handler["connection"].commit()
-		db_handler["connection"].set_session(autocommit=True)
+		db_handler["connection"].set_session(isolation_level=None,autocommit=True)
 		db_handler["cursor"].execute(sql_analyze)
 		self.__update_repack_status(db_handler, 1, "complete")
 		
@@ -881,8 +1037,8 @@ class pg_engine(object):
 		"""
 		sql_get_fkeys = """
 			SELECT 
-				t_con_create,
-				t_con_drop,
+				t_con_create_new,
+				t_con_drop_old,
 				v_schema_name,
 				v_table_name,
 				v_con_name
@@ -944,22 +1100,21 @@ class pg_engine(object):
 		"""
 		sql_get_fkeys = """
 			SELECT 
-				t_con_drop,
-				t_con_create,
-				t_con_validate,
+				t_con_drop_old,
+				t_con_create_new,
+				t_con_validate_old,
 				v_old_ref_table,
 				v_schema_name,
 				v_con_name,
 				v_new_ref_table,
 				v_referencing_table
 			FROM
-				sch_repcloud.v_tab_ref_fkeys 
+				sch_repcloud.t_tab_ref_fkeys 
 			WHERE	
-					v_schema_name=%s
-				AND v_old_ref_table=%s
+					i_id_table=%s
 			;
 		"""
-		db_handler["cursor"].execute(sql_get_fkeys,  (table[1], table[2], ))
+		db_handler["cursor"].execute(sql_get_fkeys,  (self.__id_table, ))
 		fk_list = db_handler["cursor"].fetchall()
 		for fkey in fk_list:
 			self.logger.log_message("drop: %s" %fkey[0], 'debug')
@@ -1039,7 +1194,7 @@ class pg_engine(object):
 		
 		
 		db_handler = self.__connect_db(self.connections[con])
-		print(self.__tab_list)
+		
 		for table in self.__tab_list:
 			rep_status = self.__check_repack_step(db_handler, table)
 			if rep_status[1] == "complete":
@@ -1061,6 +1216,8 @@ class pg_engine(object):
 					if consistent_reachable:
 						self.__swap_tables(db_handler, table, con)
 						rep_status = self.__check_repack_step(db_handler, table)
+						
+						#self.__swap_tables_mp(db_handler, table, con)
 					else:
 						self.__remove_table_repack(db_handler, table, con)
 						self.__update_repack_status(db_handler, 6, "failed")

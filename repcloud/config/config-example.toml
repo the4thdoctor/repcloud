@@ -57,3 +57,5 @@ lock_timeout = "3s"
 check_time = "10"
 #analyze repacked tables
 analyze_tables = "yes"
+# possible values, nothing, cancel_query, kill_query
+deadlock_resolution = "nothing"
