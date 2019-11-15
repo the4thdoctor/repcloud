@@ -571,7 +571,7 @@ class pg_engine(object):
 		#define the SQL statements required for the swap
 		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
-		sql_lock_table = """LOCK TABLE "%s"."%s" IN EXCLUSIVE MODE; """ % (table[1], table[2],)
+		sql_lock_table = """LOCK TABLE "%s"."%s" IN ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
 		
 		
 		sql_seq = """
