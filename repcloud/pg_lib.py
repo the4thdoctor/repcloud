@@ -482,18 +482,19 @@ class pg_engine(object):
 		while True:
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows, False,  ))
 			remaining_rows = db_handler["cursor"].fetchone()
-			if final_replay and remaining_rows[0]:
-				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
-				queue["out"].put(True)
+			if final_replay and remaining_rows[0]==0:
+				self.logger.log_message('All rows replayed. Authorising the swap.', 'debug')
+				queue.put(True)
 				break
 			elif remaining_rows[0]<int(max_replay_rows):
-				self.logger.log_message('Ready for swap, signalling the invoker.' , 'info')
-				queue["out"].put(True)
+				self.logger.log_message('Ready for swap, signalling we can go for the final replay.' , 'info')
+				queue.put(True)
 				self.logger.log_message('Waiting for the final replay signal.' , 'info')
-				final_replay = queue["in"].get()
+				final_replay = queue.get()
 				self.logger.log_message('Starting the final replay.' , 'info')
 			else:
 				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
+		
 		
 		self.logger.log_message('End of the replay loop.' , 'info')
 		self.__disconnect_db(db_handler)
@@ -711,21 +712,18 @@ class pg_engine(object):
 		#db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
 		#lock_ref_stat = db_handler["cursor"].fetchall()
 		self.__update_repack_status(db_handler, 4, "in progress")
-		queue = {}
-		queue["in"] = mp.Queue()
-		queue["out"] = mp.Queue()
+		queue = mp.Queue()
 		replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
 		replay_daemon.start()
 		while True:
 			if not replay_daemon.is_alive():
-				queue = {}
-				queue["in"] = mp.Queue()
-				queue["out"] = mp.Queue()
+				queue = None
+				queue = mp.Queue()
 				replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
 				replay_daemon.start()
 				time.sleep(1)
 			self.logger.log_message('Waiting for the can swap signal.' , 'info')
-			try_swap = queue["out"].get()
+			try_swap = queue.get()
 			if try_swap:
 				self.__update_repack_status(db_handler, 5, "in progress")
 				# set the lock_timeout we don't want to keep the other sessions lock in wait more than necessary
@@ -745,8 +743,10 @@ class pg_engine(object):
 					#for reftab in lock_ref_stat:
 					#	self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (reftab[1], reftab[2],  ), 'info')
 					#	db_handler["cursor"].execute(reftab[0])
-					queue["in"].put(db_handler["pid"])
-					can_swap = queue["out"].get()
+					queue.put(True)
+					time.sleep(1)
+					self.logger.log_message('Waiting for the final replay to complete.', 'info')
+					can_swap = queue.get()
 					
 					if can_swap:
 						
@@ -778,6 +778,7 @@ class pg_engine(object):
 							for view in view_create:
 								self.logger.log_message("create view %s" % (view[0]), 'debug')
 								db_handler["cursor"].execute(view[1])		
+						
 						#remove the logging triggers from the original table
 						self.logger.log_message("Dropping the logging triggers", 'info')
 						db_handler["cursor"].execute(sql_drop_trg)
@@ -791,13 +792,13 @@ class pg_engine(object):
 						self.logger.log_message("Dropping the old table", 'info')
 						db_handler["cursor"].execute(sql_drop_old_table)
 						
-
-						
 						#commit the swap
 						db_handler["connection"].commit()
-						#terminate the replay daemon
-						time.sleep(1)
-						replay_daemon.terminate()
+						#wait for the the replay daemon to terminate
+						while replay_daemon.is_alive():
+							self.logger.log_message("Waiting for the replay daemon to complete", 'info')
+							time.sleep(1)
+						
 						#exit the loop
 						break
 				
