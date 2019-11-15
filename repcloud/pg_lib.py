@@ -560,9 +560,6 @@ class pg_engine(object):
 		"""
 		The method replays the table's data then tries to swap the origin table with the new one
 		"""
-		#set continue replay to true. we replay the data until at most max_replay_rows are left
-		continue_replay = True
-		
 		lock_timeout = self.connections[con]["lock_timeout"]
 		
 		#define the SQL statements required for the swap
@@ -574,44 +571,41 @@ class pg_engine(object):
 		sql_seq = """
 			SELECT 
 				format(
-					'SELECT setval(''%%I.%%I''::regclass,(SELECT max(%%I) FROM %%s));',
+					'SELECT setval(''%%I.%%I''::regclass,%%L);',
 					nspname,
 					refname,
-					secatt,
-					seqtab
+					(last_value+(increment_by*cache_size))
 				)
+				
+				
 			FROM
 			(
 				SELECT 
 					secatt,
 					refname,
 					nspname,
-					ser.refobjid::regclass::TEXT AS seqtab
+					ser.refobjid::regclass::TEXT AS seqtab,
+					seq.increment_by,
+					seq.cache_size,
+					seq.last_value,
+					nt.i_id_table
+					
 				FROM 
 					sch_repcloud.v_serials ser
 					INNER JOIN sch_repcloud.t_table_repack nt
 					ON ser.refobjid=nt.oid_new_table
-				WHERE 
-						
-						nt.v_schema_name=%s
-					AND nt.v_old_table_name=%s
+					INNER JOIN pg_sequences seq 
+					ON 
+							seq.schemaname=nt.v_schema_name 
+						AND seq.sequencename=ser.refname
+				
 			) setv 	
+			WHERE 
+				i_id_table=%s
 			;
-
 		"""
 		
-		sql_lock_ref_tables = """
-			SELECT 
-				t_tab_lock_old,
-				v_schema_name,
-				v_referencing_table
-			FROM 
-				sch_repcloud.v_tab_ref_fkeys
-			WHERE 
-					v_referenced_schema_name=%s
-				AND	v_old_ref_table=%s
-
-		"""
+		
 		sql_swap = """
 			SELECT 
 				format('ALTER TABLE %%I.%%I SET SCHEMA sch_repdrop;',v_schema_name,v_old_table_name) AS t_change_old_tab_schema,
@@ -752,7 +746,7 @@ class pg_engine(object):
 					if can_swap:
 						
 						#determine which sequences are attached to the original table and reset the same on the new table in order to make them work properly after the swap
-						db_handler["cursor"].execute(sql_seq,  (table[1], table[2], ))
+						db_handler["cursor"].execute(sql_seq,  (self.__id_table, ))
 						reset_sequence = db_handler["cursor"].fetchone()
 						if reset_sequence:
 							self.logger.log_message("resetting sequence on new table" , 'debug')
@@ -934,7 +928,7 @@ class pg_engine(object):
 		sql_create_data_trigger = """
 			
 		CREATE TRIGGER z_repcloud_log
-			AFTER INSERT OR UPDATE OR DELETE
+			BEFORE INSERT OR UPDATE OR DELETE
 			ON %s.%s
 			FOR EACH ROW
 			EXECUTE PROCEDURE sch_repcloud.fn_log_data()
@@ -943,7 +937,7 @@ class pg_engine(object):
 		
 		sql_create_truncate_trigger = """
 			CREATE TRIGGER z_repcloud_truncate
-			AFTER TRUNCATE ON %s.%s
+			BEFORE TRUNCATE ON %s.%s
 			FOR EACH STATEMENT
 			EXECUTE PROCEDURE sch_repcloud.fn_log_truncate()
 			;
@@ -955,7 +949,7 @@ class pg_engine(object):
 		
 		sql_get_new_tab = """
 			UPDATE sch_repcloud.t_table_repack 
-			SET xid_copy_start=txid_current()
+			SET xid_copy_start=split_part(txid_current_snapshot()::text,':',1)::bigint
 			WHERE 
 					
 					v_schema_name=%s
@@ -963,8 +957,9 @@ class pg_engine(object):
 			RETURNING v_new_table_name 
 			;
 		"""
-		db_handler["connection"].set_session(autocommit=False)
-		
+		db_handler["connection"].set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE, autocommit=False)
+		vxid = self.__get_vxid(db_handler)
+		self.__wait_for_vxid(db_handler, vxid)
 		db_handler["cursor"].execute(sql_get_new_tab,  (table[1], table[2], ))
 		new_table = db_handler["cursor"].fetchone()
 		
@@ -976,7 +971,7 @@ class pg_engine(object):
 		
 		db_handler["cursor"].execute(sql_copy)
 		db_handler["connection"].commit()
-		db_handler["connection"].set_session(autocommit=True)
+		db_handler["connection"].set_session(isolation_level=None,autocommit=True)
 		db_handler["cursor"].execute(sql_analyze)
 		self.__update_repack_status(db_handler, 1, "complete")
 		

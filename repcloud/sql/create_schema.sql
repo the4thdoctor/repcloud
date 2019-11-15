@@ -192,7 +192,7 @@ BEGIN
 			WHERE 
 					trep.v_schema_name=%L
 				AND trep.v_old_table_name=%L
-				AND tlog.i_xid_action>trep.xid_copy_start
+				AND tlog.i_xid_action>=trep.xid_copy_start
 			LIMIT %L
 		) aid
 	;
@@ -734,7 +734,14 @@ BEGIN
 		);
 	END IF;
 	EXECUTE v_t_sql_insert;
-	RETURN NULL;
+	IF TG_OP ='INSERT' OR TG_OP='UPDATE'
+	THEN
+		RETURN NEW;
+	ELSEIF TG_OP='DELETE'
+	THEN
+		RETURN OLD;
+	END IF;
+	
 END
 $BODY$
 LANGUAGE plpgsql 
@@ -773,7 +780,7 @@ BEGIN
 		TG_RELID
 		);
 	EXECUTE v_t_sql_insert;
-	RETURN NULL;
+	RETURN NEW;
 END
 $BODY$
 LANGUAGE plpgsql 
