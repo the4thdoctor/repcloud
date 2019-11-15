@@ -114,6 +114,221 @@ CREATE TABLE sch_repcloud.t_view_def (
 -- functions
 
 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_replay_change(text,text,integer,boolean) 
+RETURNS bigint as 
+$BODY$
+DECLARE
+	p_t_schema			ALIAS FOR $1;
+	p_t_table			ALIAS FOR $2;
+	p_i_max_replay		ALIAS FOR $3;
+	p_b_replay_origin	ALIAS FOR $4;
+	v_rec_replay 		record; 
+	v_i_action_replay	bigint[];
+	v_i_actions 		bigint;
+	v_t_tab_data		text[];
+	v_t_sql_replay		text;
+	v_t_sql_act_rep		text;
+	v_t_sql_act 		text;
+	v_t_sql_delete 		text;
+	v_r_replay			record;
+BEGIN
+
+
+	
+	
+	v_t_tab_data:=(
+		SELECT 
+			ARRAY[
+				v_new_table_name, -- 1
+				array_to_string(array_agg(rec_new),','),-- 2,
+				array_to_string(array_agg(rec_old),','),-- 3,
+				array_to_string(array_agg(att_list),','),-- 4,
+				array_to_string(array_agg(att_markers),','),-- 5,
+				array_to_string(array_agg(att_upd),','),-- 6,
+				array_to_string(array_agg(att_upd) FILTER (WHERE att_list=ANY(t_tab_pk) ),','),-- 7
+				array_to_string(array_agg(rec_old) FILTER (WHERE att_list=ANY(t_tab_pk) ),','), -- 8
+				array_to_string(array_agg(rec_new) FILTER (WHERE att_list=ANY(t_tab_pk) ),','),-- 9
+				v_log_table_name, -- 10
+				v_replay_schema, --11
+				v_replay_table --12
+			]
+		FROM
+		(
+			SELECT 
+				tab.oid_old_table,
+				tab.t_tab_pk,
+				tab.v_new_table_name,
+				tab.v_log_table_name,
+				format('(rec_new_data).%I',att.attname,att.attname) rec_new,
+				format('(rec_old_data).%I',att.attname) rec_old,
+				format('%I',att.attname) att_list,
+				'%L' AS att_markers,
+				format('%I=%%L',att.attname) att_upd,
+				CASE
+					WHEN p_b_replay_origin
+					THEN 
+						tab.v_old_table_name
+					ELSE
+						tab.v_new_table_name
+				END AS v_replay_table,
+				CASE
+					WHEN p_b_replay_origin
+					THEN 
+						tab.v_schema_name
+					ELSE
+						'sch_repnew'
+				END AS v_replay_schema
+			FROM 
+				sch_repcloud.t_table_repack tab 
+				INNER JOIN pg_catalog.pg_attribute att 
+					ON att.attrelid=tab.oid_old_table
+			WHERE 
+					tab.v_schema_name=p_t_schema
+				AND	tab.v_old_table_name=p_t_table
+				AND att.attnum>0
+				AND NOT att.attisdropped
+				
+		) tab
+		GROUP BY
+			v_new_table_name,
+			v_log_table_name,
+			v_replay_schema, 
+			v_replay_table
+	);
+	
+
+	v_t_sql_act_rep:=format('
+		SELECT 
+			array_agg(i_action_id)
+		FROM
+		(
+			SELECT 
+				i_action_id
+			FROM 
+				sch_repnew.%I tlog
+			INNER JOIN sch_repcloud.t_table_repack trep
+				ON trep.oid_old_table=tlog.oid_old_tab_oid
+			WHERE 
+					trep.v_schema_name=%L
+				AND trep.v_old_table_name=%L
+				AND tlog.i_xid_action>=trep.xid_copy_start
+			LIMIT %L
+		) aid
+	;
+	',
+	v_t_tab_data[10],
+	p_t_schema,
+	p_t_table,
+	p_i_max_replay
+	);
+	EXECUTE v_t_sql_act_rep INTO v_i_action_replay;
+
+	v_t_sql_act:=format('
+		SELECT 
+			count(i_action_id)
+		FROM	
+			sch_repnew.%I tlog 
+			INNER JOIN sch_repcloud.t_table_repack trep
+				ON trep.oid_old_table=tlog.oid_old_tab_oid
+			WHERE 
+					trep.v_schema_name=%L
+				AND trep.v_old_table_name=%L
+				AND tlog.i_xid_action>trep.xid_copy_start
+				AND tlog.i_action_id NOT IN (SELECT unnest(%L::bigint[]))
+	;
+	',
+	v_t_tab_data[10],
+	p_t_schema,
+	p_t_table,
+	v_i_action_replay
+	);
+
+	EXECUTE v_t_sql_act INTO v_i_actions;
+
+	
+
+	v_t_sql_replay:=format(
+		'
+			SELECT 
+				i_action_id,
+				i_xid_action,
+				v_action,
+				CASE 
+					WHEN v_action=''INSERT''
+					THEN
+						format(''INSERT INTO %%I.%%I (%%s) VALUES (%%s);'',
+						%L,
+						%L,
+						%L,
+						format(%L,%s)
+						)				
+					WHEN v_action=''UPDATE''
+					THEN
+						format(''UPDATE %%I.%%I SET %%s WHERE %%s'',
+						%L,
+						%L,
+						format(%L,%s),
+						format(%L,%s)
+						)
+					WHEN v_action=''DELETE''
+					THEN
+						format(''DELETE FROM %%I.%%I WHERE %%s'',
+						%L,
+						%L,
+						format(%L,%s)
+						)
+			
+				END
+				AS rec_act
+				
+			FROM 
+				sch_repnew.%I
+			WHERE i_action_id = ANY(%L)
+			ORDER BY 
+				i_action_id,
+				i_xid_action
+			
+		',
+		v_t_tab_data[11],
+		v_t_tab_data[12],
+		v_t_tab_data[4],
+		v_t_tab_data[5],
+		v_t_tab_data[2],
+		v_t_tab_data[11],
+		v_t_tab_data[12],
+		v_t_tab_data[6],
+		v_t_tab_data[2],
+		v_t_tab_data[7],
+		v_t_tab_data[8],
+		v_t_tab_data[11],
+		v_t_tab_data[12],
+		v_t_tab_data[7],
+		v_t_tab_data[8],
+		v_t_tab_data[10],
+		v_i_action_replay
+	
+	);
+
+	RAISE DEBUG '%',v_t_sql_replay;
+	FOR v_r_replay IN EXECUTE v_t_sql_replay
+	LOOP
+		EXECUTE v_r_replay.rec_act;
+	END LOOP;
+	v_t_sql_delete:=format(
+		'DELETE FROM sch_repnew.%I WHERE i_action_id=ANY(%L::bigint[]);',
+		v_t_tab_data[10],
+		v_i_action_replay
+	
+	);	
+	EXECUTE v_t_sql_delete;
+
+	RAISE DEBUG '%',v_t_sql_act;
+	RETURN v_i_actions;
+END;
+$BODY$
+LANGUAGE plpgsql 
+;
+
 CREATE OR REPLACE FUNCTION sch_repcloud.fn_replay_change(text,text,integer) 
 RETURNS bigint as 
 $BODY$
@@ -734,13 +949,7 @@ BEGIN
 		);
 	END IF;
 	EXECUTE v_t_sql_insert;
-	IF TG_OP ='INSERT' OR TG_OP='UPDATE'
-	THEN
-		RETURN NEW;
-	ELSEIF TG_OP='DELETE'
-	THEN
-		RETURN OLD;
-	END IF;
+	RETURN NULL;
 	
 END
 $BODY$
@@ -780,7 +989,7 @@ BEGIN
 		TG_RELID
 		);
 	EXECUTE v_t_sql_insert;
-	RETURN NEW;
+	RETURN NULL;
 END
 $BODY$
 LANGUAGE plpgsql 

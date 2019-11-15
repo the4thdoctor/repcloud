@@ -466,24 +466,21 @@ class pg_engine(object):
 		else:
 			self.logger.log_message('The replay rate on %s.%s is not sufficient to reach the consistent status. Aborting the repack.' % (table[1], table[2],  ), 'info')
 			return False
-			
 	
-	def __watchdog(self, table, con, queue):
+	def __replay_data(self, table, con, queue):
 		"""
 		The method performs a replay on the specified table using the connection parameters.
 		The method creates a new database connection for performing its task.
 		The mp queue is used to communicate with the invoking method.
-		After the replay the method checks for potential deadlocks and acts according to the strategy set in the parameter deadlock_resolution.
 		"""
 		final_replay = False
 		max_replay_rows = self.connections[con]["max_replay_rows"]
-		deadlock_resolution = self.connections[con]["deadlock_resolution"]
-		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s);"""
+		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s,%s);"""
 		db_handler = self.__connect_db(self.connections[con])
 
 		self.logger.log_message('Starting the replay loop.' , 'info')
 		while True:
-			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
+			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows, False,  ))
 			remaining_rows = db_handler["cursor"].fetchone()
 			if final_replay and remaining_rows[0]:
 				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
@@ -494,12 +491,20 @@ class pg_engine(object):
 				queue["out"].put(True)
 				self.logger.log_message('Waiting for the final replay signal.' , 'info')
 				final_replay = queue["in"].get()
-				backend_invoker = final_replay
 				self.logger.log_message('Starting the final replay.' , 'info')
 			else:
 				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
 		
 		self.logger.log_message('End of the replay loop.' , 'info')
+		self.__disconnect_db(db_handler)
+	
+	def __watchdog(self, table, con, queue, pid_swap ):
+		"""
+		The method checks for potential deadlocks and acts according to the strategy set in the parameter deadlock_resolution.
+		"""
+		deadlock_resolution = self.connections[con]["deadlock_resolution"]
+		db_handler = self.__connect_db(self.connections[con])
+
 		self.logger.log_message('Start of the watchdog loop.' , 'info')
 		sql_cancel = """
 		SELECT 
@@ -513,10 +518,10 @@ class pg_engine(object):
 		;
 		"""
 		while True:
-			db_handler["cursor"].execute(sql_cancel,  (backend_invoker,  ))
+			db_handler["cursor"].execute(sql_cancel,  (pid_swap,  ))
 			blocking_processes = db_handler["cursor"].fetchall()
 			if len(blocking_processes)>0:
-				self.logger.log_message('Potential deadlock detected. Process %s cannot proceed with the table swap.' % (backend_invoker, ) , 'debug')
+				self.logger.log_message('Potential deadlock detected. Process %s cannot proceed with the table swap.' % (pid_swap, ) , 'debug')
 				if deadlock_resolution == "nothing":
 					self.logger.log_message("Deadlock resolution set to nothing. Waiting for the database's deadlock resolution." , 'warning')
 					break
@@ -565,7 +570,7 @@ class pg_engine(object):
 		#define the SQL statements required for the swap
 		sql_set_lock_timeout = """SET lock_timeout = %s;""" 
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
-		sql_lock_table = """LOCK TABLE "%s"."%s" IN ACCESS EXCLUSIVE MODE; """ % (table[1], table[2],)
+		sql_lock_table = """LOCK TABLE "%s"."%s" IN EXCLUSIVE MODE; """ % (table[1], table[2],)
 		
 		
 		sql_seq = """
@@ -709,15 +714,15 @@ class pg_engine(object):
 		queue = {}
 		queue["in"] = mp.Queue()
 		queue["out"] = mp.Queue()
-		watchdog_daemon = mp.Process(target=self.__watchdog, name='replay_process', daemon=True, args=(table, con, queue,))
-		watchdog_daemon.start()
+		replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
+		replay_daemon.start()
 		while True:
-			if not watchdog_daemon.is_alive():
+			if not replay_daemon.is_alive():
 				queue = {}
 				queue["in"] = mp.Queue()
 				queue["out"] = mp.Queue()
-				watchdog_daemon = mp.Process(target=self.__watchdog, name='replay_process', daemon=True, args=(table, con, queue,))
-				watchdog_daemon.start()
+				replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
+				replay_daemon.start()
 				time.sleep(1)
 			self.logger.log_message('Waiting for the can swap signal.' , 'info')
 			try_swap = queue["out"].get()
@@ -792,7 +797,7 @@ class pg_engine(object):
 						db_handler["connection"].commit()
 						#terminate the replay daemon
 						time.sleep(1)
-						watchdog_daemon.terminate()
+						replay_daemon.terminate()
 						#exit the loop
 						break
 				
@@ -928,7 +933,7 @@ class pg_engine(object):
 		sql_create_data_trigger = """
 			
 		CREATE TRIGGER z_repcloud_log
-			BEFORE INSERT OR UPDATE OR DELETE
+			AFTER INSERT OR UPDATE OR DELETE
 			ON %s.%s
 			FOR EACH ROW
 			EXECUTE PROCEDURE sch_repcloud.fn_log_data()
