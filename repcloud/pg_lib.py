@@ -475,12 +475,12 @@ class pg_engine(object):
 		"""
 		final_replay = False
 		max_replay_rows = self.connections[con]["max_replay_rows"]
-		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s,%s);"""
+		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s);"""
 		db_handler = self.__connect_db(self.connections[con])
 
 		self.logger.log_message('Starting the replay loop.' , 'info')
 		while True:
-			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows, False,  ))
+			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows  ))
 			remaining_rows = db_handler["cursor"].fetchone()
 			if final_replay and remaining_rows[0]==0:
 				self.logger.log_message('All rows replayed. Authorising the swap.', 'debug')
@@ -499,7 +499,7 @@ class pg_engine(object):
 		self.logger.log_message('End of the replay loop.' , 'info')
 		self.__disconnect_db(db_handler)
 	
-	def __watchdog(self, table, con, queue, pid_swap ):
+	def __watchdog(self, table, con, pid_swap ):
 		"""
 		The method checks for potential deadlocks and acts according to the strategy set in the parameter deadlock_resolution.
 		"""
@@ -739,10 +739,10 @@ class pg_engine(object):
 					# try to acquire an exclusive lock on the repacked table
 					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
 					db_handler["cursor"].execute(sql_lock_table)
+					self.logger.log_message('Starting the watchdog process', 'info')
+					watchdog_daemon = mp.Process(target=self.__watchdog, name='watchdog_process', daemon=True, args=(table, con, db_handler["pid"] ,))
+					watchdog_daemon.start()
 					
-					#for reftab in lock_ref_stat:
-					#	self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (reftab[1], reftab[2],  ), 'info')
-					#	db_handler["cursor"].execute(reftab[0])
 					queue.put(True)
 					time.sleep(1)
 					self.logger.log_message('Waiting for the final replay to complete.', 'info')
@@ -794,6 +794,10 @@ class pg_engine(object):
 						
 						#commit the swap
 						db_handler["connection"].commit()
+						
+						#terminating the watchdog
+						watchdog_daemon.terminate()
+						
 						#wait for the the replay daemon to terminate
 						while replay_daemon.is_alive():
 							self.logger.log_message("Waiting for the replay daemon to complete", 'info')
