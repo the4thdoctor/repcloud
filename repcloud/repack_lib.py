@@ -9,6 +9,8 @@ import logging
 from logging.handlers  import TimedRotatingFileHandler
 import smtplib, ssl
 from email.mime import text,multipart
+import signal
+
 class rep_notifier():
 	def __init__(self, args):
 		"""
@@ -292,7 +294,16 @@ class repack_engine():
 		self.pg_engine.tables_config=self.__tables_config
 		self.pg_engine.replay_data(self.connection, self.args.connection )
 		
+	def __terminate_replay(self, signal, frame):
+		self.logger.log_message("Caught stop replay signal terminating the replay daemon." , 'info')
+		try:
+			self.replay_daemon.terminate()
+		except:
+			pass
+		sys.exit(0)
+		
 	def replay_data(self):
+		signal.signal(signal.SIGINT, self.__terminate_replay)
 		if self.args.debug:
 			self.logger.args["log_dest"]="console"
 			self.__replay_data()
@@ -305,10 +316,35 @@ class repack_engine():
 			keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
 			replay_pid = os.path.expanduser('%s/replay_%s.pid' % (self.config["pid_dir"],self.args.config))
 			self.logger.log_message('Starting the replay process for configurantion %s.' % (self.args.config, ), 'info')
-			replay_daemon = Daemonize(app="replay_data", pid=replay_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
-			replay_daemon.start()
+			self.replay_daemon = Daemonize(app="replay_data", pid=replay_pid, action=self.__replay_data, foreground=foreground , keep_fds=keep_fds)
+			self.replay_daemon.start()
+		
+	def stop_replay(self):
+		"""
+			The method reads the pid of the replica process for the given self.source and sends a SIGINT which 
+			tells the replica process to manage a graceful exit.
+		"""
+		replay_pid = os.path.expanduser('%s/replay_%s.pid' % (self.config["pid_dir"],self.args.config))
+		if os.path.isfile(replay_pid):
+			try:
+				file_pid=open(replay_pid,'r')
+				pid=file_pid.read()
+				file_pid.close()
+				os.kill(int(pid),2)
+				print("Requesting the replay data for configuration %s to stop" % (self.args.config))
+				while True:
+					try:
+						os.kill(int(pid),0)
+					except:
+						break
+				print("The replay process is stopped")
+			except:
+				print("The replay process for the configuration %s is already stopped" % (self.args.config))
+		
+	
 		
 	def repack_tables(self):
+		self.stop_replay()
 		if self.args.debug:
 			self.logger.args["log_dest"]="console"
 			self.__repack_tables()
@@ -319,12 +355,13 @@ class repack_engine():
 				foreground = False
 				print("Repack tables process started.")
 			keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
-			init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
+			repack_pid = os.path.expanduser('%s/repack_%s.pid' % (self.config["pid_dir"],self.args.config))
 			self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
-			init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
+			init_daemon = Daemonize(app="repack_tables", pid=repack_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
 			init_daemon.start()
 
 	def prepare_repack(self):
+		self.stop_replay()
 		if self.args.debug:
 			self.logger.args["log_dest"]="console"
 			self.__prepare_repack()
@@ -335,10 +372,9 @@ class repack_engine():
 				foreground = False
 				print("Prepare repack process started.")
 			keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
-			init_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"],self.args.config))
-			print(init_pid)
+			prepare_pid = os.path.expanduser('%s/prepare_%s.pid' % (self.config["pid_dir"],self.args.config))
 			self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
-			init_daemon = Daemonize(app="repack_tables", pid=init_pid, action=self.__prepare_repack, foreground=foreground , keep_fds=keep_fds)
+			init_daemon = Daemonize(app="repack_tables", pid=prepare_pid, action=self.__prepare_repack, foreground=foreground , keep_fds=keep_fds)
 			init_daemon.start()
 		
 	def __prepare_repack(self):
@@ -351,6 +387,7 @@ class repack_engine():
 		self.pg_engine.prepare_repack(self.connection, self.args.connection )
 		msg_notify = "The prepare repack is complete. You can now run the repack_tables command to finalise the swap.\nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
 		self.notifier.send_notification('Prepare repack complete', msg_notify)
+		self.logger.log_message('The prepare repack process for configuration %s is complete.' % (self.args.config, ), 'info')
 		
 	def create_schema(self):
 		"""
