@@ -478,25 +478,25 @@ class pg_engine(object):
 		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s);"""
 		db_handler = self.__connect_db(self.connections[con])
 
-		self.logger.log_message('Starting the replay loop.' , 'info')
+		self.logger.log_message('Starting the replay loop for %s.' %(table[0], ) , 'info')
 		while True:
 			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows  ))
 			remaining_rows = db_handler["cursor"].fetchone()
 			if final_replay and remaining_rows[0]==0:
-				self.logger.log_message('All rows replayed. Authorising the swap.', 'debug')
+				self.logger.log_message('All rows replayed. Signalling the caller.', 'debug')
 				queue.put(True)
 				break
 			elif remaining_rows[0]<int(max_replay_rows):
-				self.logger.log_message('Ready for swap, signalling we can go for the final replay.' , 'info')
+				self.logger.log_message('%s rows left for replay, signalling the caller.' % (remaining_rows[0], ) , 'debug')
 				queue.put(True)
-				self.logger.log_message('Waiting for the final replay signal.' , 'info')
+				self.logger.log_message('Waiting for the final replay signal.' , 'debug')
 				final_replay = queue.get()
-				self.logger.log_message('Starting the final replay.' , 'info')
+				self.logger.log_message('Starting the final replay.' , 'debug')
 			else:
 				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
 		
 		
-		self.logger.log_message('End of the replay loop.' , 'info')
+		self.logger.log_message('End of the replay loop for table %s' %(table[0], ) , 'info')
 		self.__disconnect_db(db_handler)
 	
 	def __watchdog(self, table, con, pid_swap ):
@@ -1253,7 +1253,29 @@ class pg_engine(object):
 		if action == 'prepare':
 			self.__prepare_repack(con)
 		
+	def __replay_loop(self, con):
+		"""
+		The method loops trough the tables and replays the data until the lag is under max_replay_rows. Then moves to the next one.
+		"""
+		self.__get_repack_tables(con)
+		db_handler = self.__connect_db(self.connections[con])
 		
+		for table in self.__tab_list:
+			rep_status = self.__check_repack_step(db_handler, table)
+			if rep_status[1] == "complete" and rep_status[2] < 5:
+				self.logger.log_message("Replaying data for table %s." % (table[0], ), 'info')
+				queue = mp.Queue()
+				replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
+				replay_daemon.start()
+				replay_done = queue.get()
+				if replay_done :
+					queue.put(True)
+					while  replay_daemon.is_alive():
+						self.logger.log_message("Waiting for the replay daemon to finish." , 'info')
+						time.sleep(1)
+					
+				
+		self.__disconnect_db(db_handler)
 		
 		
 	def drop_repack_schema(self, connection, coname):
@@ -1292,3 +1314,18 @@ class pg_engine(object):
 			self.logger.log_message('Preparing the repack for all the tables in connection %s' % coname, 'info')
 			self.__repack_loop(coname, 'prepare')
 	
+	def replay_data(self, connection, coname):
+		"""
+		The method loops through the tables already prepared for repack in order to clear the replay lag. 
+		"""
+		while True:
+			if coname == 'all':
+				self.logger.log_message('Replaying the data on all the tables in the available connections'  'info')
+				for con in connection:
+					self.logger.log_message('PReplaying the data on all the tables defined in the connection %s' % con, 'info')
+					self.__replay_loop(con)
+			else:
+				self.logger.log_message('Replaying the data on all the tables in connection %s' % coname, 'info')
+				self.__replay_loop(coname)
+			time.sleep(1)
+		

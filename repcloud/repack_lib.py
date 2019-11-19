@@ -283,6 +283,31 @@ class repack_engine():
 		self.logger.log_message('The repack process for configuration %s is complete.' % (self.args.config, ), 'info')
 		self.notifier.send_notification('Repack tables complete', msg_notify)
 		
+	def __replay_data(self):
+		"""
+		The method performs the replay of the table's data before the swap independently from the swap procedure
+		"""
+		self.__check_connections()
+		self.pg_engine.connections = self.config["connections"]
+		self.pg_engine.tables_config=self.__tables_config
+		self.pg_engine.replay_data(self.connection, self.args.connection )
+		
+	def replay_data(self):
+		if self.args.debug:
+			self.logger.args["log_dest"]="console"
+			self.__replay_data()
+		else:
+			if self.config["logging"]["log_dest"]  == 'console':
+				foreground = True
+			else:
+				foreground = False
+				print("Replay data for the prepared tables started.")
+			keep_fds = [self.logger.file_logger_fds , self.logger.cons_logger_fds , ]
+			replay_pid = os.path.expanduser('%s/replay_%s.pid' % (self.config["pid_dir"],self.args.config))
+			self.logger.log_message('Starting the replay process for configurantion %s.' % (self.args.config, ), 'info')
+			replay_daemon = Daemonize(app="replay_data", pid=replay_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
+			replay_daemon.start()
+		
 	def repack_tables(self):
 		if self.args.debug:
 			self.logger.args["log_dest"]="console"
