@@ -11,7 +11,7 @@ class pg_engine(object):
 		"""
 
 		lib_dir = os.path.dirname(os.path.realpath(__file__))
-		self.sql_dir = "%s/sql/" % lib_dir
+		self.sql_dir = f"{lib_dir}/sql/"
 		self.connections = None
 		self.__tab_list = None
 		self.__tables_config = None
@@ -95,7 +95,7 @@ class pg_engine(object):
 		if coname == 'all':
 			for con in connection:
 				self.logger.args["log_dest"]="console"
-				self.logger.log_message('Creating the repack schema on %s' % con, 'info')
+				self.logger.log_message(f'Creating the repack schema on {con}', 'info')
 				self.__create_repack_schema(connection[con])
 		else:
 
@@ -133,14 +133,14 @@ class pg_engine(object):
 		schema_exists = self.__check_replica_schema(db_handler)
 		if schema_exists[0]:
 			if len(tables)>0:
-				filter.append((db_handler["cursor"].mogrify("format('%%I.%%I',v_schema,v_table) = ANY(%s)",  (tables, ))).decode())
+				filter.append((db_handler["cursor"].mogrify("format('%%I.%%I',v_schema,v_table) = ANY(%(tables)s)",  {'tables': tables})).decode())
 			if len(schemas)>0:
-				filter.append((db_handler["cursor"].mogrify("v_schema = ANY(%s)",  (schemas, ))).decode())
+				filter.append((db_handler["cursor"].mogrify("v_schema = ANY(%(schemas)s)",  {'schemas': schemas})).decode())
 			if len(filter)>0:
-				sql_filter="AND (%s)" % " OR ".join(filter)
-			sql_tab = """
+				sql_filter="AND ({filter})".format(filter=" OR ".join(filter))
+			sql_tab = f"""
 				SELECT
-					format('%%I.%%I',tab.v_schema,tab.v_table),
+					format('%I.%I',tab.v_schema,tab.v_table),
 					tab.v_schema,
 					tab.v_table,
 					tab.i_tab_size,
@@ -153,11 +153,11 @@ class pg_engine(object):
 				WHERE
 						con.contype='p'
 					AND	v_schema NOT IN ('information_schema','pg_catalog','sch_repcloud','sch_repnew','sch_repdrop')
-					AND	v_schema  NOT LIKE 'pg_%%'
-				%s
+					AND	v_schema  NOT LIKE 'pg_%'
+			    {sql_filter}
 				ORDER BY i_tab_wasted_bytes DESC
 
-			;""" % sql_filter
+			;"""
 			db_handler["cursor"].execute(sql_tab)
 			self.__tab_list = db_handler["cursor"].fetchall()
 			self.__disconnect_db(db_handler)
@@ -179,11 +179,11 @@ class pg_engine(object):
 			FROM
 				sch_repcloud.t_table_repack
 			WHERE
-					v_schema_name=%s
-				AND v_old_table_name=%s
+					v_schema_name=%(schema_name)s
+				AND v_old_table_name=%(old_table_name)s
 		;
 		"""
-		db_handler["cursor"].execute(sql_get_status,  (table[1], table[2], ))
+		db_handler["cursor"].execute(sql_get_status,  {'schema_name': table[1], 'old_table_name': table[2]})
 		rep_step = db_handler["cursor"].fetchone()
 		if rep_step:
 			rep_status = (rep_step[0], rep_step[2],self.__repack_list.index(rep_step[0]), rep_step[3])
@@ -203,18 +203,18 @@ class pg_engine(object):
 		sql_update_step = """
 			UPDATE sch_repcloud.t_table_repack
 				SET
-					en_repack_step=%s,
-					v_status=%s
+					en_repack_step=%(repack_step)s,
+					v_status=%(status)s
 			WHERE
-				i_id_table=%s
+				i_id_table=%(id_table)s
 			RETURNING v_old_table_name
 		;
 		"""
-		sql_app_name = """SET application_name = %s;"""
-		db_handler["cursor"].execute(sql_update_step,  (self.__repack_list[repack_step], status, self.__id_table, ))
+		sql_app_name = """SET application_name = %(app_name)s;"""
+		db_handler["cursor"].execute(sql_update_step,  {'repack_step': self.__repack_list[repack_step], 'status': status, 'id_table': self.__id_table})
 		tab_rep = db_handler["cursor"].fetchone()
 		app_name = self.__application_name % (tab_rep[0], self.__repack_list[repack_step], )
-		db_handler["cursor"].execute(sql_app_name,  (app_name, ))
+		db_handler["cursor"].execute(sql_app_name,  {'app_name': app_name})
 
 	def __get_table_fillfactor(self, table):
 		"""
@@ -315,15 +315,16 @@ class pg_engine(object):
 			The method creates a new table in the sch_repcloud schema using the function fn_create_repack_table
 		"""
 		fillfactor = self.__get_table_fillfactor(table)
-		sql_create_new = """SELECT sch_repcloud.fn_create_repack_table(%s,%s,%s); """
-		sql_create_log = """SELECT sch_repcloud.fn_create_log_table(%s,%s); """
-		self.logger.log_message('Creating a copy of table %s. ' % (table[0],  ), 'info')
-		db_handler["cursor"].execute(sql_create_new,  (table[1], table[2], fillfactor, ))
+		sql_create_new = """SELECT sch_repcloud.fn_create_repack_table(%(p_t_schema)s,%(p_t_table)s,%(p_i_fillfactor)s); """
+		sql_create_log = """SELECT sch_repcloud.fn_create_log_table(%(p_t_schema)s,%(p_t_table)s); """
+		table_name = table[0]
+		self.logger.log_message(f'Creating a copy of table {table_name}.', 'info')
+		db_handler["cursor"].execute(sql_create_new,  {'p_t_schema': table[1], 'p_t_table': table[2], 'p_i_fillfactor': fillfactor})
 		tab_create = db_handler["cursor"].fetchone()
 		self.__id_table = tab_create[0]
-		self.logger.log_message('Creating the log table for %s. ' % (table[0],  ), 'info')
+		self.logger.log_message('Creating the log table for {table_name}.', 'info')
 		self.__update_repack_status(db_handler, 0, "in progress")
-		db_handler["cursor"].execute(sql_create_log,  (table[1], table[2], ))
+		db_handler["cursor"].execute(sql_create_log,  {'p_t_schema': table[1], 'p_t_table': table[2]})
 		self.__update_repack_status(db_handler, 0, "complete")
 		self.__get_foreign_keys(db_handler)
 
@@ -339,15 +340,15 @@ class pg_engine(object):
 			FROM
 				sch_repcloud.v_create_idx_cons
 			WHERE
-					v_schema_name=%s
-				AND v_old_table_name=%s
+					v_schema_name=%(schema_name)s
+				AND v_old_table_name=%(old_table_name)s
 				AND v_contype='p'
 			;
 		"""
-		db_handler["cursor"].execute(sql_get_pk,  (table[1], table[2], ))
+		db_handler["cursor"].execute(sql_get_pk,  {'schema_name': table[1],'old_table_name': table[2]})
 		pkey = db_handler["cursor"].fetchone()
 		self.__update_repack_status(db_handler, 2, "in progress")
-		self.logger.log_message('Creating the primary key %s on table %s. ' % (pkey[2],pkey[1],  ), 'info')
+		self.logger.log_message(f'Creating the primary key {pkey[2]} on table {pkey[1]}.', 'info')
 		db_handler["cursor"].execute(pkey[0])
 		self.__update_repack_status(db_handler, 2, "complete")
 
@@ -360,18 +361,20 @@ class pg_engine(object):
 		try_disable = True
 		try_drop = True
 		lock_timeout = self.connections[con]["lock_timeout"]
-		sql_set_lock_timeout = """SET lock_timeout = %s;"""
+		sql_set_lock_timeout = """SET lock_timeout = %(lock_timeout)s;"""
 		sql_reset_lock_timeout = """SET lock_timeout = default;"""
+		schema=table[1]
+		table_name=table[2]
 
 		sql_disable_trg = """
-		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_log;
-		ALTER TABLE %s.%s DISABLE TRIGGER z_repcloud_truncate;
-		""" % (table[1], table[2],table[1], table[2], )
+		ALTER TABLE {schema}.{table} DISABLE TRIGGER z_repcloud_log;
+		ALTER TABLE {schema}.{table} DISABLE TRIGGER z_repcloud_truncate;
+		""".format(schema=schema, table=table_name)
 
 		sql_drop_trg = """
-			DROP TRIGGER z_repcloud_log ON  %s.%s ;
-			DROP TRIGGER z_repcloud_truncate ON  %s.%s ;
-		""" % (table[1], table[2],table[1], table[2],)
+			DROP TRIGGER z_repcloud_log ON  {schema}.{table} ;
+			DROP TRIGGER z_repcloud_truncate ON  {schema}.{table} ;
+		""".format(schema=schema, table=table_name)
 
 		sql_get_drop_table="""
 			SELECT
@@ -385,21 +388,21 @@ class pg_engine(object):
 			;
 		"""
 
-		db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
+		db_handler["cursor"].execute(sql_set_lock_timeout,  {'lock_timeout': lock_timeout})
 		while try_disable:
 			try:
 				db_handler["cursor"].execute(sql_disable_trg)
 				try_disable = False
 			except psycopg2.Error as e:
 					if e.pgcode == '40P01':
-						self.logger.log_message('Deadlock detected. I could not disable the triggers on the table %s.%s' % (table[1], table[2] ), 'info')
-						self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+						self.logger.log_message(f'Deadlock detected. I could not disable the triggers on the table {schema}.{table_name}', 'info')
+						self.logger.log_message(f"SQLCODE: {e.pgcode} SQLERROR: {e.pgerror}", 'error')
 					elif e.pgcode=='42704':
-						self.logger.log_message('Logging triggers on the table %s.%s already dropped' % (table[1], table[2] ), 'warning')
+						self.logger.log_message(f'Logging triggers on the table {schema}.{table_name} already dropped', 'warning')
 						break
 			except:
 				raise
-		db_handler["cursor"].execute(sql_reset_lock_timeout,  )
+		db_handler["cursor"].execute(sql_reset_lock_timeout)
 		self.logger.log_message('Dropping the repack table in sch_repnew schema' , 'info')
 		db_handler["cursor"].execute(sql_get_drop_table,  (table[1], table[2],  ))
 		drop_stat = db_handler["cursor"].fetchone()
@@ -981,22 +984,21 @@ class pg_engine(object):
 			SET xid_copy_start=split_part(txid_current_snapshot()::text,':',1)::bigint
 			WHERE
 
-					v_schema_name=%s
-				AND v_old_table_name=%s
+					v_schema_name=%(schema_name)s
+				AND v_old_table_name=%(old_table_name)s
 			RETURNING v_new_table_name
 			;
 		"""
 		db_handler["connection"].set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE, autocommit=False)
 		vxid = self.__get_vxid(db_handler)
 		self.__wait_for_vxid(db_handler, vxid)
-		db_handler["cursor"].execute(sql_get_new_tab,  (table[1], table[2], ))
+		db_handler["cursor"].execute(sql_get_new_tab,  {'schema_name': table[1], 'old_table_name': table[2] })
 		new_table = db_handler["cursor"].fetchone()
 
-		sql_copy = """INSERT INTO sch_repnew.{} (%s) SELECT %s FROM {}.{} ;"""  % (','.join(att_lists[0]), ','.join(att_lists[1]),)
-		self.logger.log_message('Copying the data from %s.%s to %s ' % (table[1], table[0],  new_table[0]), 'info')
-
-		sql_copy = sql.SQL(sql_copy).format(sql.Identifier(new_table[0]),sql.Identifier(table[1]), sql.Identifier(table[2]))
-		sql_analyze = sql.SQL("ANALYZE sch_repnew.{};").format(sql.Identifier(new_table[0]))
+		sql_copy = """INSERT INTO sch_repnew.{{new_table}} ({columns_to_insert}) SELECT {columns_to_select} FROM {{old_table_schema}}.{{old_table_table}} ;""".format(columns_to_insert=','.join(att_lists[0]), columns_to_select=','.join(att_lists[1]),)
+		self.logger.log_message('Copying the data from {schema}.{table} to {destination} '.format(schema=table[1], table=table[0], destination=new_table[0]), 'info')
+		sql_copy = sql.SQL(sql_copy).format(new_table=sql.Identifier(new_table[0]), old_table_schema=sql.Identifier(table[1]), old_table_table=sql.Identifier(table[2]))
+		sql_analyze = sql.SQL("ANALYZE sch_repnew.{table};").format(table=sql.Identifier(new_table[0]))
 
 		db_handler["cursor"].execute(sql_copy)
 		db_handler["connection"].commit()
@@ -1344,7 +1346,7 @@ class pg_engine(object):
 
 	def repack_tables(self, connection, coname):
 		if coname == 'all':
-			self.logger.log_message('Repacking the tables for the available  connections'  'info')
+			self.logger.log_message('Repacking the tables for the available connections', 'info')
 			for con in connection:
 				self.logger.log_message('Repacking the tables for connection %s' % con, 'info')
 				self.__repack_loop(con)
