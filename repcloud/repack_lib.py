@@ -464,6 +464,8 @@ class repack_engine():
 		msg_notify = "The prepare repack is complete. You can now run the repack_tables command to finalise the swap.\nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
 		self.notifier.send_notification('Prepare repack complete', msg_notify)
 		self.logger.log_message('The prepare repack process for configuration %s is complete.' % (self.args.config, ), 'info')
+		if self.args.start_replay:
+			self.replay_data()
 		
 	def create_schema(self):
 		"""
