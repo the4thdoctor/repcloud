@@ -16,7 +16,7 @@ class rep_notifier():
 		"""
 		Class constructor for the notifier facility
 		"""
-		self.args = args 
+		self.args = args
 	def __init_emailer(self):
 		"""
 			The method initialise the emailer if any configuration is present
@@ -28,14 +28,14 @@ class rep_notifier():
 			if emailconf["smtp_ssl"] == "starttls":
 				context = ssl.create_default_context()
 				self.emailer.starttls(context=context )
-	
+
 	def send_notification(self, subject, message):
 		"""
 			The method sends the notification according with which notifier is enabled and configured
 		"""
 		if self.args["enable_email"]:
 			self.__send_email(subject, message)
-			
+
 	def __send_email(self, subject, message):
 		"""
 			The method sends the email with the given subject to the list of emails configured in notifier.email
@@ -61,13 +61,13 @@ class rep_logger():
 		"""
 			Class constructor for the logging facility
 		"""
-		self.args = args 
+		self.args = args
 		self.__init_logger()
 
 
 	def __log_file(self, message, level):
 		"""
-		The method logs on file the message on file according with the log level 
+		The method logs on file the message on file according with the log level
 		"""
 		if level =='info':
 			self.file_logger.info(message)
@@ -79,10 +79,10 @@ class rep_logger():
 			self.file_logger.error(message)
 		elif level =='critical':
 			self.file_logger.critical(message)
-	
+
 	def __log_console(self, message, level):
 		"""
-			The method logs on file the message on the console according with the log level 
+			The method logs on file the message on the console according with the log level
 		"""
 		if level =='info':
 			self.cons_logger.info(message)
@@ -94,8 +94,8 @@ class rep_logger():
 			self.cons_logger.error(message)
 		elif level =='critical':
 			self.cons_logger.critical(message)
-	
-	
+
+
 	def log_message(self, message, level='info'):
 		"""
 		The method outputs the message on log file or console.
@@ -105,14 +105,14 @@ class rep_logger():
 		self.__log_file(message, level)
 		if self.args["log_dest"]  == 'console' or self.args["debug"] :
 			self.__log_console(message, level)
-		
+
 	def __init_logger(self):
 		"""
 		The method initialise a new logger object using the configuration parameters.
 		The formatter is different if the debug option is enabler or not.
-		The method returns a new logger object and sets the logger's file descriptor in the class variable 
+		The method returns a new logger object and sets the logger's file descriptor in the class variable
 		logger_fds, used when the process is demonised.
-		
+
 		:return: list with logger and file descriptor
 		:rtype: list
 
@@ -121,16 +121,16 @@ class rep_logger():
 		if not os.path.isdir(log_dir):
 			print ("creating directory %s" % log_dir)
 			os.makedirs(log_dir,  exist_ok=True)
-		log_level = self.args["log_level"] 
-		log_dest = self.args["log_dest"] 
-		
+		log_level = self.args["log_level"]
+		log_dest = self.args["log_dest"]
+
 		self.log_dest = log_dest
 		log_days_keep = int(self.args["log_days_keep"])
 		log_name = "repack_%s" % (self.args["config_name"] )
 		log_file = '%s/%s.log' % (log_dir,log_name)
 		str_format = "%(asctime)s %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
 		formatter = logging.Formatter(str_format, "%Y-%m-%d %H:%M:%S")
-		
+
 		sh=logging.StreamHandler(sys.stdout)
 		fh = TimedRotatingFileHandler(log_file, when="d",interval=1,backupCount=log_days_keep)
 		if log_level=='debug' or self.args["debug"]:
@@ -142,14 +142,14 @@ class rep_logger():
 		elif log_level=='warning':
 			fh.setLevel(logging.WARNING)
 			sh.setLevel(logging.WARNING)
-		
+
 		self.file_logger = logging.getLogger('file')
 		self.cons_logger = logging.getLogger('console')
 		self.file_logger.setLevel(logging.DEBUG)
 		self.cons_logger.setLevel(logging.DEBUG)
 		fh.setFormatter(formatter)
 		sh.setFormatter(formatter)
-		
+
 		self.file_logger.addHandler(fh)
 		self.cons_logger.addHandler(sh)
 		self.file_logger_fds = fh.stream.fileno()
@@ -172,26 +172,26 @@ class repack_engine():
 		self.__tables_config = {}
 		lib_dir = os.path.dirname(os.path.realpath(__file__))
 		rep_dir = "%s/.%s" % (os.path.expanduser('~'),  app_dir)
-		
-			
+
+
 		local_conf = "%s/%s" % ( rep_dir, config_dir )
 		self.global_conf_example = '%s/%s/config-example.toml' % (lib_dir, config_dir, )
 		self.local_conf_example = '%s/config-example.toml' % local_conf
-		
-		
+
+
 		local_logs = "%s/logs/" % rep_dir
 		local_pid = "%s/pid/" % rep_dir
 		self.__table_conf_dir = "%s/table_conf/" % local_conf
-		
+
 		self.global_table_conf_example = '%s/%s/config-example_repack.toml' % (lib_dir, config_dir, )
 		self.local_table_conf_example = '%s/config-example_repack.toml' % self.__table_conf_dir
-		
+
 		self.conf_dirs=[
-			rep_dir, 
-			local_conf, 
-			local_logs, 
-			local_pid, 
-			self.__table_conf_dir, 
+			rep_dir,
+			local_conf,
+			local_logs,
+			local_pid,
+			self.__table_conf_dir,
 		]
 		self.__set_configuration_files()
 		self.__set_conf_permissions(rep_dir)
@@ -203,12 +203,12 @@ class repack_engine():
 		self.__load_config()
 		self.__load_table_config()
 		self.pg_engine = pg_engine()
-		
+
 		log_args={}
-		log_args["log_dir"] = self.config["logging"]["log_dir"] 
-		log_args["log_dest"] = self.config["logging"]["log_dest"] 
-		log_args["log_level"] = self.config["logging"]["log_level"] 
-		log_args["log_days_keep"] = self.config["logging"]["log_days_keep"] 
+		log_args["log_dir"] = self.config["logging"]["log_dir"]
+		log_args["log_dest"] = self.config["logging"]["log_dest"]
+		log_args["log_level"] = self.config["logging"]["log_level"]
+		log_args["log_days_keep"] = self.config["logging"]["log_days_keep"]
 		log_args["config_name"] = self.config_name
 		log_args["debug"] = self.args.debug
 		self.logger = rep_logger(log_args)
@@ -218,7 +218,7 @@ class repack_engine():
 		self.replay_pid = os.path.expanduser('%s/replay_%s.pid' % (self.config["pid_dir"],self.args.config))
 		self.prepare_pid = os.path.expanduser('%s/prepare_%s.pid' % (self.config["pid_dir"],self.args.config))
 		self.repack_pid = os.path.expanduser('%s/repack_%s.pid' % (self.config["pid_dir"],self.args.config))
-		
+
 	def __load_config(self):
 		"""
 		The method loads the configuration from the file specified in the args.config parameter.
@@ -252,7 +252,7 @@ class repack_engine():
 		config_file = open(self.config_file, 'r')
 		self.config = toml.loads(config_file.read())
 		config_file.close()
-		
+
 		for connection in self.config["connections"]:
 			table_config_file= '%s/%s_%s.toml' % (self.__table_conf_dir, self.config_name, connection )
 			if os.path.isfile(table_config_file):
@@ -260,7 +260,7 @@ class repack_engine():
 				table_config = toml.loads(config_file.read())
 				config_file.close()
 				self.__tables_config[connection] = table_config
-		
+
 	def show_connections(self):
 		"""
 		Displays the connections available for the configuration  nicely formatted
@@ -279,7 +279,7 @@ class repack_engine():
 
 	def __repack_tables(self):
 		"""
-		The method performs the real repack 
+		The method performs the real repack
 		"""
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
@@ -288,7 +288,7 @@ class repack_engine():
 		msg_notify = "The repack tables is complete. \nTables processed:\n%s" % "\n".join(self.pg_engine.tables_repacked)
 		self.logger.log_message('The repack process for configuration %s is complete.' % (self.args.config, ), 'info')
 		self.notifier.send_notification('Repack tables complete', msg_notify)
-		
+
 	def __replay_data(self):
 		"""
 		The method performs the replay of the table's data before the swap independently from the swap procedure
@@ -297,7 +297,7 @@ class repack_engine():
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.tables_config=self.__tables_config
 		self.pg_engine.replay_data(self.connection, self.args.connection )
-		
+
 	def __terminate_replay(self, signal, frame):
 		self.logger.log_message("Caught stop replay signal. Terminating the replay daemon." , 'info')
 		try:
@@ -305,7 +305,7 @@ class repack_engine():
 		except:
 			pass
 		sys.exit(0)
-		
+
 	def __terminate_repack(self, signal, frame):
 		self.logger.log_message("Caught stop repack signal. Terminating the repack process." , 'info')
 		try:
@@ -322,7 +322,7 @@ class repack_engine():
 		except:
 			pass
 		sys.exit(0)
-		
+
 	def replay_data(self):
 		signal.signal(signal.SIGINT, self.__terminate_replay)
 		if self.args.debug:
@@ -338,7 +338,7 @@ class repack_engine():
 			self.logger.log_message('Starting the replay process for configurantion %s.' % (self.args.config, ), 'info')
 			self.replay_daemon = Daemonize(app="replay_data", pid=self.replay_pid, action=self.__replay_data, foreground=foreground , keep_fds=keep_fds)
 			self.replay_daemon.start()
-		
+
 	def stop_replay(self):
 		"""
 			The method reads the pid of the replay process then use it to terminate the background process with signal 2.
@@ -358,7 +358,7 @@ class repack_engine():
 				print("The replay process is stopped")
 			except:
 				print("The replay process for the configuration %s is already stopped" % (self.args.config))
-		
+
 	def stop_repack(self):
 		"""
 			The method reads the pid of the repack process then use it to terminate the background process with signal 2.
@@ -378,7 +378,7 @@ class repack_engine():
 				print("The repack process is stopped")
 			except:
 				print("The repack process for the configuration %s is already stopped" % (self.args.config))
-				
+
 	def stop_prepare(self):
 		"""
 			The method reads the pid of the prepare repack process then use it to terminate the background process with signal 2.
@@ -398,8 +398,8 @@ class repack_engine():
 				print("The prepare repack process is stopped")
 			except:
 				print("The prepare repack process for the configuration %s is already stopped" % (self.args.config))
-	
-		
+
+
 	def repack_tables(self):
 		"""
 		The method starts the repack process
@@ -419,7 +419,7 @@ class repack_engine():
 			self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
 			repack_daemon = Daemonize(app="repack_tables", pid=self.repack_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
 			repack_daemon.start()
-	
+
 	def abort_repack(self):
 		"""
 		The method drops the prepared repack removing the log tables, the triggers and the copies.
@@ -432,10 +432,10 @@ class repack_engine():
 		self.pg_engine.tables_config=self.__tables_config
 		self.pg_engine.abort_repack(self.connection, self.args.connection )
 		self.logger.log_message('The repack process for configuration %s is complete.' % (self.args.config, ), 'info')
-		
-	
-		
-	
+
+
+
+
 	def prepare_repack(self):
 		self.stop_replay()
 		signal.signal(signal.SIGINT, self.__terminate_prepare)
@@ -452,10 +452,10 @@ class repack_engine():
 			self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
 			prepare_daemon = Daemonize(app="repack_tables", pid=self.prepare_pid, action=self.__prepare_repack, foreground=foreground , keep_fds=keep_fds)
 			prepare_daemon.start()
-		
+
 	def __prepare_repack(self):
 		"""
-		The method performs the repack 
+		The method performs the repack
 		"""
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
@@ -466,7 +466,7 @@ class repack_engine():
 		self.logger.log_message('The prepare repack process for configuration %s is complete.' % (self.args.config, ), 'info')
 		if self.args.start_replay:
 			self.replay_data()
-		
+
 	def create_schema(self):
 		"""
 		The method creates the repack schema for the target connection.
@@ -484,28 +484,28 @@ class repack_engine():
 	def __set_conf_permissions(self,  rep_dir):
 		"""
 			The method sets the permissions of the configuration directory to 700
-			
-			:param rep_dir: the configuration directory 
+
+			:param rep_dir: the configuration directory
 		"""
 		if os.path.isdir(rep_dir):
 			os.chmod(rep_dir, 0o700)
 
 
 	def __set_configuration_files(self):
-		""" 
+		"""
 			The method loops the list self.conf_dirs creating them only if they are missing.
-			
-			The method checks the freshness of the config-example.yaml and connection-example.toml 
+
+			The method checks the freshness of the config-example.yaml and connection-example.toml
 			copies the new version from the python library determined in the class constructor with get_python_lib().
-			
+
 			If the configuration file is missing the method copies the file with a different message.
-		
+
 		"""
 		for confdir in self.conf_dirs:
 			if not os.path.isdir(confdir):
 				print ("creating directory %s" % confdir)
 				os.mkdir(confdir)
-				
+
 		if os.path.isfile(self.local_conf_example):
 			if os.path.getctime(self.global_conf_example)>os.path.getctime(self.local_conf_example):
 				print ("updating configuration example with %s" % self.local_conf_example)
@@ -513,7 +513,7 @@ class repack_engine():
 		else:
 			print ("copying configuration  example in %s" % self.local_conf_example)
 			copy(self.global_conf_example, self.local_conf_example)
-			
+
 		if os.path.isfile(self.local_table_conf_example):
 			if os.path.getctime(self.global_table_conf_example)>os.path.getctime(self.local_table_conf_example):
 				print ("updating per table configuration example with %s" % self.local_table_conf_example)
@@ -521,4 +521,3 @@ class repack_engine():
 		else:
 			print ("copying configuration  example in %s" % self.local_table_conf_example)
 			copy(self.global_table_conf_example, self.local_table_conf_example)
-
