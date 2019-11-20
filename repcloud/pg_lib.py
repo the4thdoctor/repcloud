@@ -322,7 +322,7 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_create_new,  {'p_t_schema': table[1], 'p_t_table': table[2], 'p_i_fillfactor': fillfactor})
 		tab_create = db_handler["cursor"].fetchone()
 		self.__id_table = tab_create[0]
-		self.logger.log_message('Creating the log table for {table_name}.', 'info')
+		self.logger.log_message(f'Creating the log table for {table_name}.', 'info')
 		self.__update_repack_status(db_handler, 0, "in progress")
 		db_handler["cursor"].execute(sql_create_log,  {'p_t_schema': table[1], 'p_t_table': table[2]})
 		self.__update_repack_status(db_handler, 0, "complete")
@@ -383,8 +383,8 @@ class pg_engine(object):
 			FROM
 				sch_repcloud.t_table_repack
 			WHERE
-					v_schema_name=%s
-				AND v_old_table_name=%s
+					v_schema_name=%(schema)s
+				AND v_old_table_name=%(table_name)s
 			;
 		"""
 
@@ -404,21 +404,21 @@ class pg_engine(object):
 				raise
 		db_handler["cursor"].execute(sql_reset_lock_timeout)
 		self.logger.log_message('Dropping the repack table in sch_repnew schema' , 'info')
-		db_handler["cursor"].execute(sql_get_drop_table,  (table[1], table[2],  ))
+		db_handler["cursor"].execute(sql_get_drop_table,  {'schema': schema, 'table_name': table_name})
 		drop_stat = db_handler["cursor"].fetchone()
 		db_handler["cursor"].execute(drop_stat[0])
-		db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
+		db_handler["cursor"].execute(sql_set_lock_timeout,  {'lock_timeout': lock_timeout})
 		while try_drop:
 			try:
 				db_handler["cursor"].execute(sql_drop_trg)
 				db_handler["cursor"].execute(drop_stat[1])
 				try_drop = False
 			except psycopg2.Error as e:
-					self.logger.log_message('An error occurred during the drop of the table %s.%s' % (table[1], table[2] ), 'info')
-					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+					self.logger.log_message(f'An error occurred during the drop of the table {schema}.{table_name}', 'info')
+					self.logger.log_message(f"SQLCODE: {e.pgcode} SQLERROR: {e.pgerror}", 'error')
 			except:
 				raise
-			db_handler["cursor"].execute(sql_reset_lock_timeout,  )
+			db_handler["cursor"].execute(sql_reset_lock_timeout)
 
 	def __check_consistent_reachable(self, db_handler, table, con):
 		"""
@@ -429,7 +429,8 @@ class pg_engine(object):
 		"""
 		max_replay_rows = self.connections[con]["max_replay_rows"]
 		check_time = int(self.connections[con]["check_time"])
-
+		schema = table[1]
+		table_name = table[2]
 
 		sql_get_mod_tuples = """
 			SELECT
@@ -437,42 +438,41 @@ class pg_engine(object):
 			FROM
 				pg_stat_user_tables
 			WHERE
-				schemaname=%s
-			AND	relname=%s
+				schemaname=%(schemaname)s
+			AND	relname=%(relname)s
 		;
 		"""
 		sql_replay_data = """
-			SELECT sch_repcloud.fn_replay_change(%s,%s,%s);
+			SELECT sch_repcloud.fn_replay_change(%(p_t_schema)s,%(p_t_table)s,%(p_i_max_replay)s);
 		"""
 
-
-		self.logger.log_message('Checking the initial value of modified tuples on %s.%s' % (table[1], table[2], ), 'info')
-		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
+		self.logger.log_message(f'Checking the initial value of modified tuples on {schema}.{table_name}', 'info')
+		db_handler["cursor"].execute(sql_get_mod_tuples, {'schemaname': schema, 'relname': table_name})
 		initial_tuples = db_handler["cursor"].fetchone()
-		self.logger.log_message('Initial value is %s.' % (initial_tuples[0], ), 'debug')
-		self.logger.log_message('Sleeping %d seconds.' % (check_time,  ), 'info')
+		self.logger.log_message(f'Initial value is {initial_tuples[0]}.', 'debug')
+		self.logger.log_message(f'Sleeping {check_time} seconds.', 'info')
 		time.sleep(check_time)
-		self.logger.log_message('Checking the final value of modified tuples on %s.%s' % (table[1], table[2], ), 'info')
-		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
+		self.logger.log_message(f'Checking the final value of modified tuples on {schema}.{table_name}', 'info')
+		db_handler["cursor"].execute(sql_get_mod_tuples, {'schemaname': schema, 'relname': table_name})
 		final_tuples = db_handler["cursor"].fetchone()
 		update_rate = (int(final_tuples[0])-int(initial_tuples[0]))/60
-		self.logger.log_message('The rate of the modified tuples on %s.%s is %d tuples/second' % (table[1], table[2], update_rate, ), 'info')
-		self.logger.log_message('The final value is %s.' % (final_tuples[0], ), 'debug')
-		self.logger.log_message('Checking the replay speed of %s tuples on %s.%s' % (max_replay_rows, table[1], table[2], ), 'info')
+		self.logger.log_message(f'The rate of the modified tuples on {schema}.{table_name} is {update_rate} tuples/second', 'info')
+		self.logger.log_message(f'The final value is {final_tuples[0]}.', 'debug')
+		self.logger.log_message(f'Checking the replay speed of {max_replay_rows} tuples on {schema}.{table_name}', 'info')
 		start_replay = time.time()
-		db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
+		db_handler["cursor"].execute(sql_replay_data, {'p_t_schema': schema, 'p_t_table': table_name, 'p_i_max_replay': max_replay_rows})
 		end_replay = time.time()
 		replay_time = end_replay- start_replay
 		replay_rate = int(max_replay_rows)/replay_time
-		self.logger.log_message('The procedure replayed on %s.%s %s in %s seconds' % (table[1], table[2], max_replay_rows,replay_time,  ), 'debug')
-		self.logger.log_message('The replay rate on %s.%s is %s tuples/second' % (table[1], table[2], replay_rate, ), 'info')
+		self.logger.log_message(f'The procedure replayed on {schema}.{table_name} {max_replay_rows} in {replay_time} seconds', 'debug')
+		self.logger.log_message(f'The replay rate on {schema}.{table_name} is {replay_rate} tuples/second', 'info')
 
 
 		if replay_rate>update_rate:
-			self.logger.log_message('The replay rate on %s.%s is sufficient to reach the consistent status.' % (table[1], table[2],  ), 'info')
+			self.logger.log_message(f'The replay rate on {schema}.{table_name} is sufficient to reach the consistent status.', 'info')
 			return True
 		else:
-			self.logger.log_message('The replay rate on %s.%s is not sufficient to reach the consistent status. Aborting the repack.' % (table[1], table[2],  ), 'info')
+			self.logger.log_message(f'The replay rate on {schema}.{table_name} is not sufficient to reach the consistent status. Aborting the repack.', 'info')
 			return False
 
 	def __replay_data(self, table, con, queue):
@@ -482,13 +482,18 @@ class pg_engine(object):
 		The mp queue is used to communicate with the invoking method.
 		"""
 		final_replay = False
+		schema = table[1]
+		table_name = table[2]
 		max_replay_rows = self.connections[con]["max_replay_rows"]
-		sql_replay_data = """SELECT sch_repcloud.fn_replay_change(%s,%s,%s);"""
+		# TODO: extract sql_replay_data and share between this method and the one above
+		sql_replay_data = """
+			SELECT sch_repcloud.fn_replay_change(%(p_t_schema)s,%(p_t_table)s,%(p_i_max_replay)s);
+		"""
 		db_handler = self.__connect_db(self.connections[con])
 
-		self.logger.log_message('Starting the replay loop for %s.' %(table[0], ) , 'info')
+		self.logger.log_message(f'Starting the replay loop for {schema}.{table_name}', 'info')
 		while True:
-			db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows  ))
+			db_handler["cursor"].execute(sql_replay_data, {'p_t_schema': schema, 'p_t_table': table_name, 'p_i_max_replay': max_replay_rows})
 			remaining_rows = db_handler["cursor"].fetchone()
 			if final_replay and remaining_rows[0]==0:
 				self.logger.log_message('All rows replayed. Signalling the caller.', 'debug')
@@ -1373,7 +1378,7 @@ class pg_engine(object):
 			if coname == 'all':
 				self.logger.log_message('Replaying the data on all the tables in the available connections'  'info')
 				for con in connection:
-					self.logger.log_message('PReplaying the data on all the tables defined in the connection %s' % con, 'info')
+					self.logger.log_message('Replaying the data on all the tables defined in the connection %s' % con, 'info')
 					self.__replay_loop(con)
 			else:
 				self.logger.log_message('Replaying the data on all the tables in connection %s' % coname, 'info')
