@@ -424,6 +424,9 @@ class repack_engine():
 		"""
 		The method drops the prepared repack removing the log tables, the triggers and the copies.
 		"""
+		self.stop_replay()
+		self.stop_repack()
+		self.stop_prepare()
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
 		self.pg_engine.tables_config=self.__tables_config

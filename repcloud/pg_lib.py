@@ -1206,6 +1206,7 @@ class pg_engine(object):
 	def __abort_repack(self, con):
 		"""
 		The method removes the log table, the triggers and the copy of the tables prepared  for repack with prepare_repack.
+		The method takes action also If the table is left in inconsistent status.
 		"""
 		db_handler = self.__connect_db(self.connections[con])
 		for table in self.__tab_list:
@@ -1218,8 +1219,18 @@ class pg_engine(object):
 					self.logger.log_message('The repack for the table %s is already aborted.' % (table[0], ), 'info')
 				self.__set_ready_for_swap(db_handler, False)
 				self.__update_repack_status(db_handler, 8, "complete")
+			elif rep_status[2] == 8:
+					self.logger.log_message('The table %s is not prepared for repack. Abort not required.' % (table[0], ), 'info')
+			elif rep_status[3] == False and rep_status[1] in ["in progress", "failed"]:
+				try:
+					self.logger.log_message('Resetting the status for the table %s.' % (table[0], ), 'info')
+					self.__remove_table_repack(db_handler, table, con)
+				except:
+					self.logger.log_message("Couldn't remove the copy and trigger for table %s." % (table[0], ), 'info')
+				self.__set_ready_for_swap(db_handler, False)
+				self.__update_repack_status(db_handler, 8, "complete")
 			else:
-				self.logger.log_message('The table %s is not prepared for repack. Abort not required.' % (table[0], ), 'info')
+				self.logger.log_message('The table %s status is .' % (table[0], ), 'info')
 			
 		
 	
