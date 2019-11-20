@@ -673,21 +673,6 @@ class pg_engine(object):
 				i_create_order;
 		"""
 			
-		sql_check_rows = """
-			SELECT 
-				count(i_action_id)
-			FROM	
-				sch_repnew.%s tlog
-				INNER JOIN sch_repcloud.t_table_repack trep
-					ON trep.oid_old_table=tlog.oid_old_tab_oid
-				WHERE 
-						trep.v_schema_name=%%s
-					AND trep.v_old_table_name=%%s
-					AND tlog.i_xid_action>trep.xid_copy_start
-			;
-		"""
-		
-		
 		sql_drop_trg = """
 			DROP TRIGGER z_repcloud_log ON  sch_repdrop.%s ;
 			DROP TRIGGER z_repcloud_truncate ON  sch_repdrop.%s ;
@@ -711,11 +696,6 @@ class pg_engine(object):
 		table_swap = db_handler["cursor"].fetchall()
 		
 		
-		#check how many rows we should replay
-		sql_check_rows = sql_check_rows % table_swap[0][11]
-		
-		#db_handler["cursor"].execute(sql_lock_ref_tables,  (table[1], table[2], ))
-		#lock_ref_stat = db_handler["cursor"].fetchall()
 		self.__update_repack_status(db_handler, 4, "in progress")
 		queue = mp.Queue()
 		replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
