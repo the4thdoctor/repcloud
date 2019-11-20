@@ -5,20 +5,20 @@ CREATE SCHEMA IF NOT EXISTS sch_repnew;
 
 SET search_path=sch_repcloud;
 
--- types 
+-- types
 CREATE TYPE ty_repack_step
 	AS ENUM ('create table','copy', 'create pkey','create indices', 'replay', 'swap tables','swap aborted','validate','complete');
 
 
 --VIEWS
-CREATE OR REPLACE VIEW v_version 
+CREATE OR REPLACE VIEW v_version
  AS
 	SELECT '0.0.1'::TEXT t_version
 ;
 
 --TYPES
 
---TABLES/INDICES	
+--TABLES/INDICES
 
 CREATE TABLE t_table_repack
 (
@@ -46,7 +46,7 @@ CREATE TABLE t_table_repack
 CREATE UNIQUE INDEX uidx_t_table_repack_table_schema ON t_table_repack(v_schema_name,v_old_table_name);
 
 
-CREATE TABLE t_tab_fkeys 
+CREATE TABLE t_tab_fkeys
 (
 	i_id_fkey	bigserial,
 	i_id_table	bigint NOT NULL,
@@ -62,7 +62,7 @@ CREATE TABLE t_tab_fkeys
 );
 
 
-CREATE TABLE t_tab_ref_fkeys 
+CREATE TABLE t_tab_ref_fkeys
 (
 	i_id_fkey	bigserial,
 	i_id_table	bigint NOT NULL,
@@ -75,9 +75,9 @@ CREATE TABLE t_tab_ref_fkeys
 	v_referenced_schema_name character varying(100) NOT NULL,
 	v_schema_name character varying(100) NOT NULL,
 	v_con_name character varying(100) NOT NULL,
-	v_new_ref_table character varying(100) NOT NULL,         
-	v_referencing_table character varying(100) NOT NULL,     
-	v_ref_schema_name character varying(100) NOT NULL,  
+	v_new_ref_table character varying(100) NOT NULL,
+	v_referencing_table character varying(100) NOT NULL,
+	v_ref_schema_name character varying(100) NOT NULL,
 	CONSTRAINT pk_t_tab_ref_fkeys PRIMARY KEY (i_id_fkey)
 );
 
@@ -114,14 +114,14 @@ CREATE TABLE sch_repcloud.t_view_def (
 
 -- functions
 
-CREATE OR REPLACE FUNCTION sch_repcloud.fn_replay_change(text,text,integer) 
-RETURNS bigint as 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_replay_change(text,text,integer)
+RETURNS bigint as
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
 	p_t_table			ALIAS FOR $2;
 	p_i_max_replay		ALIAS FOR $3;
-	v_rec_replay 		record; 
+	v_rec_replay 		record;
 	v_i_action_replay	bigint[];
 	v_i_actions 		bigint;
 	v_t_tab_data		text[];
@@ -133,10 +133,10 @@ DECLARE
 BEGIN
 
 
-	
-	
+
+
 	v_t_tab_data:=(
-		SELECT 
+		SELECT
 			ARRAY[
 				v_new_table_name, -- 1
 				array_to_string(array_agg(rec_new),','),-- 2,
@@ -151,7 +151,7 @@ BEGIN
 			]
 		FROM
 		(
-			SELECT 
+			SELECT
 				tab.oid_old_table,
 				tab.t_tab_pk,
 				tab.v_new_table_name,
@@ -161,35 +161,35 @@ BEGIN
 				format('%I',att.attname) att_list,
 				'%L' AS att_markers,
 				format('%I=%%L',att.attname) att_upd
-			FROM 
-				sch_repcloud.t_table_repack tab 
-				INNER JOIN pg_catalog.pg_attribute att 
+			FROM
+				sch_repcloud.t_table_repack tab
+				INNER JOIN pg_catalog.pg_attribute att
 					ON att.attrelid=tab.oid_old_table
-			WHERE 
+			WHERE
 					tab.v_schema_name=p_t_schema
 				AND	tab.v_old_table_name=p_t_table
 				AND att.attnum>0
 				AND NOT att.attisdropped
-				
+
 		) tab
 		GROUP BY
 			v_new_table_name,
 			v_log_table_name
 	);
-	
+
 
 	v_t_sql_act_rep:=format('
-		SELECT 
+		SELECT
 			array_agg(i_action_id)
 		FROM
 		(
-			SELECT 
+			SELECT
 				i_action_id
-			FROM 
+			FROM
 				sch_repnew.%I tlog
 			INNER JOIN sch_repcloud.t_table_repack trep
 				ON trep.oid_old_table=tlog.oid_old_tab_oid
-			WHERE 
+			WHERE
 					trep.v_schema_name=%L
 				AND trep.v_old_table_name=%L
 				AND tlog.i_xid_action>=trep.xid_copy_start
@@ -205,13 +205,13 @@ BEGIN
 	EXECUTE v_t_sql_act_rep INTO v_i_action_replay;
 
 	v_t_sql_act:=format('
-		SELECT 
+		SELECT
 			count(i_action_id)
-		FROM	
-			sch_repnew.%I tlog 
+		FROM
+			sch_repnew.%I tlog
 			INNER JOIN sch_repcloud.t_table_repack trep
 				ON trep.oid_old_table=tlog.oid_old_tab_oid
-			WHERE 
+			WHERE
 					trep.v_schema_name=%L
 				AND trep.v_old_table_name=%L
 				AND tlog.i_xid_action>trep.xid_copy_start
@@ -226,22 +226,22 @@ BEGIN
 
 	EXECUTE v_t_sql_act INTO v_i_actions;
 
-	
+
 
 	v_t_sql_replay:=format(
 		'
-			SELECT 
+			SELECT
 				i_action_id,
 				i_xid_action,
 				v_action,
-				CASE 
+				CASE
 					WHEN v_action=''INSERT''
 					THEN
 						format(''INSERT INTO sch_repnew.%%I (%%s) VALUES (%%s);'',
 						%L,
 						%L,
 						format(%L,%s)
-						)				
+						)
 					WHEN v_action=''UPDATE''
 					THEN
 						format(''UPDATE sch_repnew.%%I SET %%s WHERE %%s ;'',
@@ -262,14 +262,14 @@ BEGIN
 						)
 				END
 				AS rec_act
-				
-			FROM 
+
+			FROM
 				sch_repnew.%I
 			WHERE i_action_id = ANY(%L)
-			ORDER BY 
+			ORDER BY
 				i_action_id,
 				i_xid_action
-			
+
 		',
 		v_t_tab_data[1],
 		v_t_tab_data[4],
@@ -286,7 +286,7 @@ BEGIN
 		v_t_tab_data[1],
 		v_t_tab_data[10],
 		v_i_action_replay
-	
+
 	);
 	RAISE DEBUG '%',v_t_sql_replay;
 	FOR v_r_replay IN EXECUTE v_t_sql_replay
@@ -297,23 +297,23 @@ BEGIN
 		'DELETE FROM sch_repnew.%I WHERE i_action_id=ANY(%L::bigint[]);',
 		v_t_tab_data[10],
 		v_i_action_replay
-	
-	);	
+
+	);
 	EXECUTE v_t_sql_delete;
 
 	RAISE DEBUG '%',v_t_sql_act;
 	RETURN v_i_actions;
 END;
 $BODY$
-LANGUAGE plpgsql 
+LANGUAGE plpgsql
 ;
 
- 
 
 
 
-CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_log_table(text,text) 
-RETURNS VOID as 
+
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_log_table(text,text)
+RETURNS VOID as
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
@@ -322,7 +322,7 @@ DECLARE
 	v_t_log				text[];
 BEGIN
 	v_t_log:=(
-		SELECT 
+		SELECT
 			ARRAY[
 				v_log_table_name,
 				v_schema_name,
@@ -330,9 +330,9 @@ BEGIN
 				oid_old_table::text
 
 				]
-		FROM 
+		FROM
 			sch_repcloud.t_table_repack
-		WHERE	
+		WHERE
 			v_schema_name=p_t_schema
 			AND v_old_table_name=p_t_table
 	);
@@ -346,10 +346,10 @@ BEGIN
 			rec_new_data %I.%I ,
 			rec_old_data %I.%I ,
 			ts_action timestamp with time zone NOT NULL DEFAULT clock_timestamp()
-		
+
 		);
 		ALTER TABLE sch_repnew.%I ADD CONSTRAINT pk_t_log_replay_%s PRIMARY KEY (i_action_id);
-		CREATE INDEX  idx_xid_action_%s ON sch_repnew.%I  USING btree(i_xid_action);	
+		CREATE INDEX  idx_xid_action_%s ON sch_repnew.%I  USING btree(i_xid_action);
 		CREATE INDEX  idx_oid_old_tab_oid_%s ON sch_repnew.%I  USING btree(oid_old_tab_oid);
 	',
 	v_t_log[1], --logtable
@@ -371,8 +371,8 @@ $BODY$
 LANGUAGE plpgsql
 ;
 
-CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_repack_table(text,text,integer) 
-RETURNS bigint as 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_create_repack_table(text,text,integer)
+RETURNS bigint as
 $BODY$
 DECLARE
 	p_t_schema			ALIAS FOR $1;
@@ -398,7 +398,7 @@ BEGIN
 			v_new_table,
 			p_t_schema,
 			p_t_table
-			
+
 		);
 	EXECUTE t_sql_create ;
 	IF p_i_fillfactor IS NOT NULL
@@ -408,13 +408,13 @@ BEGIN
 		p_i_fillfactor);
 		EXECUTE t_sql_alter ;
 	END IF;
-	
+
 	v_t_seq_name:=(
-		SELECT 
+		SELECT
 			ARRAY[refname,secatt]::text[]
-		FROM 
-			sch_repcloud.v_serials 
-		WHERE 
+		FROM
+			sch_repcloud.v_serials
+		WHERE
 			refobjid=v_oid_old_table
 	 );
 	IF v_t_seq_name IS NOT NULL
@@ -437,7 +437,7 @@ BEGIN
 		EXECUTE t_sql_alter ;
 	END IF;
 	v_oid_new_table:=format('sch_repnew.%I',v_new_table)::regclass::oid;
-	INSERT INTO sch_repcloud.t_table_repack 
+	INSERT INTO sch_repcloud.t_table_repack
 		(
 			oid_old_table,
 			v_old_table_name,
@@ -446,7 +446,7 @@ BEGIN
 			v_schema_name,
 			v_log_table_name
 		)
-		VALUES 
+		VALUES
 			(
 				v_oid_old_table,
 				p_t_table,
@@ -454,35 +454,35 @@ BEGIN
 				v_new_table,
 				p_t_schema,
 				v_log_table
-			) 
+			)
 		ON CONFLICT (v_schema_name,v_old_table_name)
-			DO UPDATE 
-				SET 
+			DO UPDATE
+				SET
 					v_new_table_name=v_new_table,
 					oid_old_table=v_oid_old_table,
 					oid_new_table=v_oid_new_table,
 					v_log_table_name=v_log_table
 		RETURNING i_id_table INTO v_i_id_table
-	;	
+	;
 
 	UPDATE sch_repcloud.t_table_repack
 	SET t_tab_pk=keydat.t_pk_att
-	FROM 
+	FROM
 		(
-			SELECT 
+			SELECT
 				array_agg(attname) AS t_pk_att,
 				relname AS t_table_name,
 				conrelid AS oid_conrelid
 			FROM
 			(
-				SELECT 
+				SELECT
 					attname,
 					relname,
 					conkey_order,
 					conrelid
 				FROM
 				(
-					SELECT 
+					SELECT
 						unnest(conkey) AS conkey,
 						generate_subscripts(conkey,1) AS conkey_order,
 						conname,
@@ -491,21 +491,21 @@ BEGIN
 						tab.relname,
 						nsp.nspname,
 						typ.typname::text
-					FROM 
-						pg_catalog.pg_constraint con 
+					FROM
+						pg_catalog.pg_constraint con
 						INNER JOIN pg_catalog.pg_namespace nsp
 							ON nsp.oid=con.connamespace
 						INNER JOIN pg_class tab
 							ON tab.oid=con.conrelid
 						INNER JOIN pg_type typ
 							ON typ.typrelid=tab.oid
-						
+
 					WHERE
 						con.contype='p'
-				
+
 				) keydat
-				INNER JOIN pg_catalog.pg_attribute att 
-					ON 
+				INNER JOIN pg_catalog.pg_attribute att
+					ON
 						att.attrelid=keydat.conrelid
 					AND att.attnum=conkey
 					WHERE
@@ -513,7 +513,7 @@ BEGIN
 						AND relname=p_t_table
 				ORDER BY conkey_order
 			) keyagg
-			GROUP BY 
+			GROUP BY
 				relname,
 				conrelid
 		) keydat
@@ -522,11 +522,11 @@ BEGIN
 
 	DELETE FROM sch_repcloud.t_view_def
 	WHERE i_id_table=v_i_id_table;
-	
-	
-	WITH RECURSIVE tabv AS 
+
+
+	WITH RECURSIVE tabv AS
 	(
-		SELECT 
+		SELECT
 			tab.i_id_table,
 			vie.v_view_name,
 			vie.t_change_schema,
@@ -538,14 +538,14 @@ BEGIN
 			vie.v_schema_name,
 			0 AS create_order,
 			0 AS drop_order
-		FROM 
-			sch_repcloud.v_get_dep_views vie 
-			INNER JOIN sch_repcloud.t_table_repack tab 
+		FROM
+			sch_repcloud.v_get_dep_views vie
+			INNER JOIN sch_repcloud.t_table_repack tab
 				ON tab.oid_old_table=vie.oid_referencing
-		WHERE 
+		WHERE
 				tab.i_id_table=v_i_id_table
 		 UNION ALL
-		 SELECT 
+		 SELECT
 			tab.i_id_table,
 			vie.v_view_name,
 			vie.t_change_schema,
@@ -557,15 +557,15 @@ BEGIN
 			vie.v_schema_name,
 			create_order + 1 AS create_order,
 			drop_order - 1 AS drop_order
-		FROM 
-			sch_repcloud.v_get_dep_views vie 
+		FROM
+			sch_repcloud.v_get_dep_views vie
 			INNER JOIN tabv tab
 				ON tab.oid_view=vie.oid_referencing
 		WHERE
 			vie.oid_referencing<>vie.oid_view
-		
-	)	
-	
+
+	)
+
 	INSERT INTO sch_repcloud.t_view_def
 			(
 				i_id_table,
@@ -578,7 +578,7 @@ BEGIN
 				i_create_order,
 				i_drop_order
 			)
-	SELECT 
+	SELECT
 		i_id_table,
 		v_view_name,
 		t_change_schema,
@@ -586,23 +586,23 @@ BEGIN
 		t_drop_view,
 		t_refresh_matview,
 		(
-			SELECT 
-				array_agg(format('%s;',indexdef)) 
-			FROM 
-				pg_indexes 
-			WHERE 
+			SELECT
+				array_agg(format('%s;',indexdef))
+			FROM
+				pg_indexes
+			WHERE
 					tablename = v_view_name
 				AND	schemaname = v_schema_name
 		),
 		create_order,
 		drop_order
 	FROM tabv
-	
+
 	;
 
-		
+
 	DELETE FROM sch_repcloud.t_idx_repack
-	WHERE 
+	WHERE
 			i_id_table=v_i_id_table
 	;
 
@@ -619,7 +619,7 @@ BEGIN
 				t_constraint_def
 			)
 
-		SELECT 
+		SELECT
 			tab.i_id_table,
 			tab.v_new_table_name,
 			tab.v_schema_name,
@@ -629,27 +629,27 @@ BEGIN
 			idx.t_index_name,
 			idx.t_index_def,
 			t_constraint_def
-		FROM 
-			sch_repcloud.v_token_idx idx 
+		FROM
+			sch_repcloud.v_token_idx idx
 			INNER JOIN	sch_repcloud.t_table_repack tab
-				ON 
+				ON
 						tab.v_old_table_name=idx.v_table
 					AND	tab.v_schema_name=idx.v_schema
-			WHERE 
+			WHERE
 					tab.i_id_table=v_i_id_table
 				AND coalesce(idx.v_contype,'p')='p'
-				
+
 		ON CONFLICT DO NOTHING
 		;
 
 	RETURN	v_i_id_table;
 END
 $BODY$
-LANGUAGE plpgsql 
+LANGUAGE plpgsql
 ;
 
-CREATE OR REPLACE FUNCTION sch_repcloud.fn_log_data() 
-RETURNS TRIGGER as 
+CREATE OR REPLACE FUNCTION sch_repcloud.fn_log_data()
+RETURNS TRIGGER as
 $BODY$
 DECLARE
 	v_t_sql_insert	text;
@@ -670,7 +670,7 @@ BEGIN
 				v_action,
 				rec_new_data,
 				oid_old_tab_oid
-				
+
 			)
 			VALUES
 			(
@@ -740,15 +740,15 @@ BEGIN
 	END IF;
 	EXECUTE v_t_sql_insert;
 	RETURN NULL;
-	
+
 END
 $BODY$
-LANGUAGE plpgsql 
+LANGUAGE plpgsql
 ;
 
 
-CREATE OR REPLACE FUNCTION fn_log_truncate() 
-RETURNS TRIGGER as 
+CREATE OR REPLACE FUNCTION fn_log_truncate()
+RETURNS TRIGGER as
 $BODY$
 DECLARE
 	v_t_sql_insert	text;
@@ -782,35 +782,35 @@ BEGIN
 	RETURN NULL;
 END
 $BODY$
-LANGUAGE plpgsql 
+LANGUAGE plpgsql
 ;
 
 --VIEWS
 
 CREATE OR REPLACE VIEW v_table_column_types
 AS
-	SELECT 
+	SELECT
 		nspname AS schema_name,
 		relname AS table_name,
 		format('{%s}',col_typ_map)::json AS col_typ_map
-		
+
 	FROM
 		(
-		SELECT 
+		SELECT
 		string_agg(format(
 			'"%s":"%s"',
 			replace(attname,'"',''),
 			replace(format_type(att.atttypid, att.atttypmod),'"','')),',') AS col_typ_map,
 		sch.nspname,
 		tab.relname
-		
-	FROM 
-		pg_attribute att 
-		INNER JOIN pg_class tab 
+
+	FROM
+		pg_attribute att
+		INNER JOIN pg_class tab
 			ON tab.oid=att.attrelid
 		INNER JOIN pg_catalog.pg_namespace sch
 			ON sch.oid=tab.relnamespace
-	WHERE 
+	WHERE
 			attnum>0
 		AND NOT attisdropped
 	GROUP BY nspname,relname
@@ -824,7 +824,7 @@ AS
 
 
 CREATE OR REPLACE VIEW v_token_idx AS
-SELECT 
+SELECT
 	v_table,
 	v_schema,
 	b_indisunique,
@@ -833,9 +833,9 @@ SELECT
 	t_idx_token[2] AS t_index_name,
 	t_idx_token[4] AS t_index_def,
 	t_constraint_def
-	
-FROM 
-( 
+
+FROM
+(
 	SELECT
 		tab.relname AS v_table,
 		sch.nspname AS v_schema,
@@ -843,30 +843,30 @@ FROM
 			pg_get_indexdef(ind.oid),
 			'(CREATE.*INDEX )(.*?)( ON.*? USING.*?)(.*?)'
 		) AS t_idx_token,
-		CASE 
-			WHEN conname IS NULL 
-			THEN 
+		CASE
+			WHEN conname IS NULL
+			THEN
 				FALSE
-			ELSE 
+			ELSE
 				TRUE
 		END AS b_idx_constraint,
 		con.contype AS v_contype,
-		CASE 
-			WHEN conname IS NOT NULL 
-			THEN 
+		CASE
+			WHEN conname IS NOT NULL
+			THEN
 				pg_get_constraintdef(con.oid)
 		END AS t_constraint_def,
 		idx.indisunique AS b_indisunique
-		
-	FROM 
-		pg_class tab 
-		INNER JOIN pg_namespace sch 
+
+	FROM
+		pg_class tab
+		INNER JOIN pg_namespace sch
 			ON sch.oid=tab.relnamespace
-		LEFT OUTER JOIN pg_index idx 
+		LEFT OUTER JOIN pg_index idx
 			ON idx.indrelid=tab.oid
-		LEFT OUTER JOIN pg_class ind 
+		LEFT OUTER JOIN pg_class ind
 			ON ind.oid=idx.indexrelid
-		LEFT OUTER JOIN pg_constraint con 
+		LEFT OUTER JOIN pg_constraint con
 			ON	tab.oid=con.conrelid
 			AND ind.oid=con.conindid
 ) idx
@@ -874,7 +874,7 @@ FROM
 
 
 CREATE OR REPLACE VIEW v_blocking_pids as
-SELECT 
+SELECT
 	blocked_locks.pid     AS blocked_pid,
 	blocked_activity.usename  AS blocked_user,
 	blocking_locks.pid     AS blocking_pid,
@@ -885,9 +885,9 @@ SELECT
 	(SELECT query from pg_stat_activity where pid=blocking_locks.pid) as blocking_statement,
 	format('SELECT pg_cancel_backend(%L);',blocking_locks.pid ) as cancel_statement,
 	format('SELECT pg_terminate_backend(%L);',blocking_locks.pid ) as terminate_statement
- FROM  
+ FROM
 	pg_catalog.pg_locks	blocked_locks
-	JOIN pg_catalog.pg_stat_activity blocked_activity  
+	JOIN pg_catalog.pg_stat_activity blocked_activity
 		ON blocked_activity.pid = blocked_locks.pid
 	JOIN pg_catalog.pg_locks blocking_locks
 		ON	blocking_locks.locktype = blocked_locks.locktype
@@ -901,11 +901,11 @@ SELECT
 		AND	blocking_locks.objid IS NOT DISTINCT FROM blocked_locks.objid
 		AND	blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid
 		AND	blocking_locks.pid != blocked_locks.pid
-	JOIN pg_catalog.pg_stat_activity blocking_activity 
+	JOIN pg_catalog.pg_stat_activity blocking_activity
 		ON blocking_activity.pid = blocking_locks.pid
- WHERE 
+ WHERE
 	NOT blocked_locks.GRANTED
-ORDER BY 
+ORDER BY
 	blocking_age DESC
  ;
 
@@ -913,21 +913,21 @@ ORDER BY
 
   -- View inspired by the pg_repack's virtual transaction query
   CREATE OR REPLACE VIEW v_virtual_txd AS
-  SELECT 
+  SELECT
   	array_agg(lck.virtualtransaction) AS x_vxids
-  FROM 
+  FROM
   	pg_catalog.pg_locks lck
-  	LEFT JOIN pg_stat_activity AS act 
-    	ON lck.pid = act.pid 
+  	LEFT JOIN pg_stat_activity AS act
+    	ON lck.pid = act.pid
     LEFT JOIN pg_database AS dat
-	    ON act.datid = dat.oid 
-  WHERE	
-  		locktype = 'virtualxid' 
-	AND lck.pid NOT IN (pg_backend_pid()) 
+	    ON act.datid = dat.oid
+  WHERE
+  		locktype = 'virtualxid'
+	AND lck.pid NOT IN (pg_backend_pid())
   	AND (lck.virtualxid, lck.virtualtransaction) <> ('1/1', '-1/0')
 	AND (act.application_name IS NULL OR act.application_name NOT like 'repcloud%')
-	AND act.query !~* E'^\\\s*vacuum\\\s+' 
-	AND act.query !~ E'^autovacuum: ' 
+	AND act.query !~* E'^\\\s*vacuum\\\s+'
+	AND act.query !~ E'^autovacuum: '
 	AND ((dat.datname IS NULL OR dat.datname = current_database()) OR lck.database = 0)
 ;
 
@@ -1129,7 +1129,7 @@ FROM
                    	LEFT OUTER JOIN pg_stats sts
                    		ON sch.nspname=sts.schemaname
                    		AND sts.tablename=tab.relname,
-                   	
+
                     (
                         SELECT
                         (
@@ -1183,11 +1183,11 @@ FROM
 
 CREATE OR REPLACE VIEW v_create_idx_cons
 AS
-SELECT 
+SELECT
 	CASE
 		WHEN b_idx_constraint
 		THEN
-			CASE 
+			CASE
 			WHEN v_contype IN ('p','u')
 			THEN
 			format(
@@ -1215,7 +1215,7 @@ SELECT
 
 FROM
 (
-SELECT 
+SELECT
 	tab.v_old_table_name,
 	tab.v_new_table_name,
 	tab.v_schema_name,
@@ -1229,7 +1229,7 @@ SELECT
 	idx.t_index_def,
 	idx.v_contype,
 	idx.t_constraint_def
-FROM 
+FROM
 	sch_repcloud.t_idx_repack idx
 	INNER JOIN sch_repcloud.t_table_repack tab
 		ON tab.i_id_table=idx.i_id_table
@@ -1243,7 +1243,7 @@ SELECT
 	sch.nspname as v_schema_name,
 	con.conname AS v_con_name,
 	tab.relname AS v_table_name
-	
+
 
 FROM
 	pg_class tab
@@ -1256,7 +1256,7 @@ FROM
 WHERE
 			con.contype in ('f')
 		AND NOT con.convalidated
-		
+
 ;
 
 
@@ -1281,7 +1281,7 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 				con.connamespace=tab.relnamespace
 			AND	con.conrelid=tab.oid
 		INNER JOIN sch_repcloud.t_table_repack rep
-			ON tab.oid=rep.oid_old_table 
+			ON tab.oid=rep.oid_old_table
 	WHERE
 			con.contype in ('f')
 		AND con.confrelid<>con.conrelid
@@ -1290,14 +1290,14 @@ CREATE OR REPLACE VIEW v_tab_fkeys AS
 
 
 CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
-	SELECT 
+	SELECT
 		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s sch_repnew.%I %s NOT VALID ;',v_ref_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_new_ref_table,t_con_token[3]) AS t_con_create_new,
 		format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s %I.%I %s NOT VALID ;',v_ref_schema_name,v_referencing_table ,v_con_name,t_con_token[1],v_schema_name,v_old_ref_table,t_con_token[3]) AS t_con_create_old,
 		CASE WHEN b_self_referencing
 		THEN
 			'SELECT True;'
 		ELSE
-			format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table ,v_con_name) 
+			format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table ,v_con_name)
 		END AS t_con_drop_old,
 		format('ALTER TABLE ONLY  %I.%I VALIDATE CONSTRAINT %I ;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_con_validate_old,
 		format('LOCK TABLE  %I.%I IN ACCESS EXCLUSIVE MODE;',v_ref_schema_name,v_referencing_table,v_con_name) AS t_tab_lock_old,
@@ -1311,24 +1311,24 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 		i_id_table
 	FROM
 		(
-			SELECT 
-				pg_get_constraintdef(con.oid) AS condef, 
+			SELECT
+				pg_get_constraintdef(con.oid) AS condef,
 				regexp_match(
 					pg_get_constraintdef(con.oid),
 					'(FOREIGN KEY\s*\(.*?\)\s*REFERENCES)\s*(.*)(\(.*)'
 				) AS t_con_token,
 				CASE
 					WHEN con.conrelid=con.confrelid
-					THEN 
+					THEN
 						rep.v_new_table_name
-					ELSE 
+					ELSE
 						tabr.relname
 				END AS v_referencing_table,
 				CASE
 					WHEN con.conrelid=con.confrelid
-					THEN 
+					THEN
 						'sch_repnew'
-					ELSE 
+					ELSE
 						sch.nspname
 				END AS v_ref_schema_name,
 				sch.nspname AS v_schema_name,
@@ -1338,7 +1338,7 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 				rep.v_schema_name AS v_referenced_schema_name,
 				con.conrelid=con.confrelid AS b_self_referencing,
 				rep.i_id_table
-			
+
 			FROM
 			pg_class tab
 			INNER JOIN pg_namespace sch
@@ -1348,12 +1348,12 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 					con.connamespace=tab.relnamespace
 				AND	con.confrelid=tab.oid
 			INNER JOIN sch_repcloud.t_table_repack rep
-				 ON con.confrelid=rep.oid_old_table 
+				 ON con.confrelid=rep.oid_old_table
 			INNER JOIN pg_class tabr
 				ON  con.conrelid=tabr.oid
 				WHERE
 						con.contype in ('f')
-					
+
 		) con
 ;
 
@@ -1361,72 +1361,72 @@ CREATE OR REPLACE VIEW v_tab_ref_fkeys AS
 Views to get dependencies adapted from pgadmin3's query to get referenced objects
 */
 
-CREATE OR REPLACE VIEW v_serials 
-AS 
-SELECT 
-	* 
-FROM 
+CREATE OR REPLACE VIEW v_serials
+AS
+SELECT
+	*
+FROM
 (
-	SELECT DISTINCT 
-	 	dep.deptype, 
-		dep.classid, 
+	SELECT DISTINCT
+	 	dep.deptype,
+		dep.classid,
 		dep.objid,
 		dep.refclassid,
 		dep.refobjid,
 		ad.adsrc,
-		cl.relkind, 
+		cl.relkind,
 		(SELECT attname FROM pg_catalog.pg_attribute WHERE (attrelid,attnum)=(SELECT adrelid,adnum FROM pg_attrdef WHERE oid=depref.objid)) AS secatt,
 		COALESCE(coc.relname, clrw.relname) AS ownertable,
 		CASE
-			WHEN 
-					cl.relname IS NOT NULL 
-				AND att.attname IS NOT NULL 
-			THEN 
-				cl.relname || '.' || att.attname 
-			ELSE 
-				COALESCE(cl.relname, co.conname, pr.proname, tg.tgname, ty.typname, la.lanname, rw.rulename, ns.nspname) 
+			WHEN
+					cl.relname IS NOT NULL
+				AND att.attname IS NOT NULL
+			THEN
+				cl.relname || '.' || att.attname
+			ELSE
+				COALESCE(cl.relname, co.conname, pr.proname, tg.tgname, ty.typname, la.lanname, rw.rulename, ns.nspname)
 		END AS refname,
 		COALESCE(nsc.nspname, nso.nspname, nsp.nspname, nst.nspname, nsrw.nspname) AS nspname
 	FROM pg_depend dep
-		LEFT JOIN pg_class cl 
+		LEFT JOIN pg_class cl
 			ON dep.objid=cl.oid
-		LEFT JOIN pg_attribute att 
+		LEFT JOIN pg_attribute att
 			ON dep.objid=att.attrelid AND dep.objsubid=att.attnum
-		LEFT JOIN pg_namespace nsc 
+		LEFT JOIN pg_namespace nsc
 			ON cl.relnamespace=nsc.oid
-		LEFT JOIN pg_proc pr 
+		LEFT JOIN pg_proc pr
 			ON dep.objid=pr.oid
-		LEFT JOIN pg_namespace nsp 
+		LEFT JOIN pg_namespace nsp
 			ON pr.pronamespace=nsp.oid
-		LEFT JOIN pg_trigger tg 
+		LEFT JOIN pg_trigger tg
 			ON dep.objid=tg.oid
-		LEFT JOIN pg_type ty 
+		LEFT JOIN pg_type ty
 			ON dep.objid=ty.oid
-		LEFT JOIN pg_namespace nst 
+		LEFT JOIN pg_namespace nst
 			ON ty.typnamespace=nst.oid
-		LEFT JOIN pg_constraint co 
+		LEFT JOIN pg_constraint co
 			ON dep.objid=co.oid
-		LEFT JOIN pg_class coc 
+		LEFT JOIN pg_class coc
 			ON co.conrelid=coc.oid
-		LEFT JOIN pg_namespace nso 
+		LEFT JOIN pg_namespace nso
 			ON co.connamespace=nso.oid
-		LEFT JOIN pg_rewrite rw 
+		LEFT JOIN pg_rewrite rw
 			ON dep.objid=rw.oid
-		LEFT JOIN pg_class clrw 
+		LEFT JOIN pg_class clrw
 			ON clrw.oid=rw.ev_class
-		LEFT JOIN pg_namespace nsrw 
+		LEFT JOIN pg_namespace nsrw
 			ON clrw.relnamespace=nsrw.oid
-		LEFT JOIN pg_language la 
+		LEFT JOIN pg_language la
 			ON dep.objid=la.oid
-		LEFT JOIN pg_namespace ns 
+		LEFT JOIN pg_namespace ns
 			ON dep.objid=ns.oid
-		LEFT JOIN pg_attrdef ad 
+		LEFT JOIN pg_attrdef ad
 			ON ad.oid=dep.objid
 		INNER JOIN pg_catalog.pg_depend depref
 			ON dep.objid=depref.refobjid
 
 )ser
-WHERE 
+WHERE
 		relkind='S'
 	AND secatt IS NOT NULL
 ;
@@ -1434,7 +1434,7 @@ WHERE
 
 CREATE OR REPLACE VIEW v_get_dep_views
 AS
-SELECT 
+SELECT
 	v_view_name,
 	v_schema_name,
 	oid_referencing,
@@ -1442,12 +1442,12 @@ SELECT
 	format('ALTER %s VIEW %I.%I SET SCHEMA sch_repdrop;',t_matview,v_schema_name,v_view_name ) AS t_change_schema,
 	format('CREATE %s VIEW %I.%I AS %s %s;',t_matview,v_schema_name,v_view_name,trim(trailing ';' from pg_get_viewdef(oid_view)),t_no_data) AS t_create_view,
 	format('DROP %s VIEW %I.%I ;',t_matview,v_schema_name,v_view_name) AS t_drop_view,
-	CASE 
+	CASE
 	WHEN v_rel_kind='m'
 	THEN
 		format('REFRESH MATERIALIZED VIEW %I.%I ;',v_schema_name,v_view_name)
 	END AS t_refresh_matview
-	
+
 FROM
 (
 	SELECT DISTINCT
@@ -1456,54 +1456,54 @@ FROM
 		clv.relname AS v_view_name,
 		nspv.nspname AS v_schema_name,
 		clv.relkind AS v_rel_kind,
-		CASE WHEN 
+		CASE WHEN
 			clv.relkind='m'
-		THEN	
+		THEN
 			'MATERIALIZED'
 		ELSE
 			''
 		END AS t_matview,
-		CASE WHEN 
+		CASE WHEN
 			clv.relkind='m'
-		THEN	
+		THEN
 			'WITH NO DATA'
 		ELSE
 			''
 		END AS t_no_data
 		FROM pg_depend dep
-			LEFT JOIN pg_class cl 
+			LEFT JOIN pg_class cl
 				ON dep.objid=cl.oid
-			LEFT JOIN pg_attribute att 
+			LEFT JOIN pg_attribute att
 				ON dep.objid=att.attrelid AND dep.objsubid=att.attnum
-			LEFT JOIN pg_namespace nsc 
+			LEFT JOIN pg_namespace nsc
 				ON cl.relnamespace=nsc.oid
-			LEFT JOIN pg_proc pr 
+			LEFT JOIN pg_proc pr
 				ON dep.objid=pr.oid
-			LEFT JOIN pg_namespace nsp 
+			LEFT JOIN pg_namespace nsp
 				ON pr.pronamespace=nsp.oid
-			LEFT JOIN pg_trigger tg 
+			LEFT JOIN pg_trigger tg
 				ON dep.objid=tg.oid
-			LEFT JOIN pg_type ty 
+			LEFT JOIN pg_type ty
 				ON dep.objid=ty.oid
-			LEFT JOIN pg_namespace nst 
+			LEFT JOIN pg_namespace nst
 				ON ty.typnamespace=nst.oid
-			LEFT JOIN pg_constraint co 
+			LEFT JOIN pg_constraint co
 				ON dep.objid=co.oid
-			LEFT JOIN pg_class coc 
+			LEFT JOIN pg_class coc
 				ON co.conrelid=coc.oid
-			LEFT JOIN pg_namespace nso 
+			LEFT JOIN pg_namespace nso
 				ON co.connamespace=nso.oid
-			LEFT JOIN pg_rewrite rw 
+			LEFT JOIN pg_rewrite rw
 				ON dep.objid=rw.oid
-			LEFT JOIN pg_class clrw 
+			LEFT JOIN pg_class clrw
 				ON clrw.oid=rw.ev_class
-			LEFT JOIN pg_namespace nsrw 
+			LEFT JOIN pg_namespace nsrw
 				ON clrw.relnamespace=nsrw.oid
-			LEFT JOIN pg_language la 
+			LEFT JOIN pg_language la
 				ON dep.objid=la.oid
-			LEFT JOIN pg_namespace ns 
+			LEFT JOIN pg_namespace ns
 				ON dep.objid=ns.oid
-			LEFT JOIN pg_attrdef ad 
+			LEFT JOIN pg_attrdef ad
 				ON ad.oid=dep.objid
 			INNER JOIN pg_rewrite rev
 				ON dep.objid=rev.oid
