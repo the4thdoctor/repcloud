@@ -22,7 +22,7 @@ setup(
 	long_description=readme(),
 	author = "Federico Campoli",
 	author_email = "the4thdoctor.gallifrey@gmail.com",
-	maintainer = "Federico Campoli", 
+	maintainer = "Federico Campoli",
 	maintainer_email = "the4thdoctor.gallifrey@gmail.com",
 	url="https://github.com/the4thdoctor/repcloud/",
 	license="BSD License",
@@ -53,21 +53,21 @@ setup(
 		"repcloud.pg_lib",
 	],
 	scripts=[
-		"scripts/rpcl.py", 
+		"scripts/rpcl.py",
 		"scripts/rpcl"
 	],
 	install_requires=[
-		'argparse>=1.2.1', 
-		'psycopg2-binary>=2.7.4', 
-		'toml>=0.10.0', 
-		'tabulate>=0.8.1', 
-		'daemonize>=2.4.7', 
-		'sphinx>=2.1.2', 
+		'argparse>=1.2.1',
+		'psycopg2-binary>=2.7.4',
+		'toml>=0.10.0',
+		'tabulate>=0.8.1',
+		'daemonize>=2.4.7',
+		'sphinx>=2.1.2',
 	],
-	package_data=package_data, 
+	package_data=package_data,
 	packages=setuptools.find_packages(),
-	include_package_data = True, 
+	include_package_data = True,
 	python_requires='>=3.3',
 	keywords='postgresql database cloud repack transform',
-	
+
 )
