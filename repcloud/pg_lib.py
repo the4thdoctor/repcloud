@@ -453,8 +453,8 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_get_mod_tuples,  (table[1], table[2],  ))
 		final_tuples = db_handler["cursor"].fetchone()
 		update_rate = (int(final_tuples[0])-int(initial_tuples[0]))/60
-		self.logger.log_message('The final value is %s.' % (final_tuples[0], ), 'debug')
 		self.logger.log_message('The rate of the modified tuples on %s.%s is %d tuples/second' % (table[1], table[2], update_rate, ), 'info')
+		self.logger.log_message('The final value is %s.' % (final_tuples[0], ), 'debug')
 		self.logger.log_message('Checking the replay speed of %s tuples on %s.%s' % (max_replay_rows, table[1], table[2], ), 'info')
 		start_replay = time.time()
 		db_handler["cursor"].execute(sql_replay_data,  (table[1], table[2],max_replay_rows,  ))
@@ -966,7 +966,7 @@ class pg_engine(object):
 		
 		sql_create_truncate_trigger = """
 			CREATE TRIGGER z_repcloud_truncate
-			BEFORE TRUNCATE ON %s.%s
+			AFTER TRUNCATE ON %s.%s
 			FOR EACH STATEMENT
 			EXECUTE PROCEDURE sch_repcloud.fn_log_truncate()
 			;

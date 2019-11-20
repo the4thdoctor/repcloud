@@ -244,18 +244,22 @@ BEGIN
 						)				
 					WHEN v_action=''UPDATE''
 					THEN
-						format(''UPDATE sch_repnew.%%I SET %%s WHERE %%s'',
+						format(''UPDATE sch_repnew.%%I SET %%s WHERE %%s ;'',
 						%L,
 						format(%L,%s),
 						format(%L,%s)
 						)
 					WHEN v_action=''DELETE''
 					THEN
-						format(''DELETE FROM sch_repnew.%%I WHERE %%s'',
+						format(''DELETE FROM sch_repnew.%%I WHERE %%s ;'',
 						%L,
 						format(%L,%s)
 						)
-			
+					WHEN v_action=''TRUNCATE''
+					THEN
+						format(''TRUNCATE TABLE sch_repnew.%%I;'',
+						%L
+						)
 				END
 				AS rec_act
 				
@@ -279,6 +283,7 @@ BEGIN
 		v_t_tab_data[1],
 		v_t_tab_data[7],
 		v_t_tab_data[8],
+		v_t_tab_data[1],
 		v_t_tab_data[10],
 		v_i_action_replay
 	
@@ -752,7 +757,7 @@ DECLARE
 	v_old_row		record;
 	v_new_row		record;
 BEGIN
-	v_t_log_table:=format('%s_%s_log',TG_TABLE_NAME,TG_RELID);
+	v_t_log_table:=format('log_%s',TG_RELID);
 	v_i_action_xid:=(txid_current()::bigint);
 		v_t_sql_insert:=format(
 		'INSERT INTO sch_repnew.%I
