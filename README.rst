@@ -36,6 +36,7 @@ the command line rpcl accepts the following options:
 * --config specifies the config file to use in .repcloud/config. If omitted tje defaults configuration default.toml will be used
 * --connection specifies which connection to use within the configuration file. if omitted any connection is used for repacking
 * --debug forces the process in foreground with log sent both, to file and console
+* --start-replay starts the replay_data process as soon as the prepare_repack is finished. It applies only to prepare_repack.
 
 Without debug and with the log_dest set to file, the process starts in background.
 
@@ -46,6 +47,11 @@ rpcl accepts the following commands
 * drop_schema drops the repack helper schemas from the target database. if any table failed the repack, its copy is dropped as well
 * repack_tables repacks the tables listed within the connection
 * prepare_repack prepares the tables for the repack, creates the new table, copies the data, and builds the indices. It stops before the swap.
+* abort_repack cancel any prepared table for repack  and resets the status of any table  left in failed or in progress status. The logging triggers, the log table and the copy table if present are dropped  by the command.
+* replay_data starts a replay data daemon. Useful to avoid a big lag to clear up between the prepare_repack and the final swap. It can be started automatically at the end of prepare repack with the option --start-replay
+* stop_prepare terminates the background process of prepare_repack
+* stop_repack terminates the background process of repack_tables
+* stop_replay  terminates the background process of replay_data
 
 Please note that prepare_repack requires much more space than repack_tables because all tables are copied and prepared for the repack instead of repacking and dropping
 them one by one.
@@ -62,7 +68,7 @@ The file describing the storage settings must be named after the configuration a
 For example, if we are using the configuration *default.toml* where there is the connection *repack* the table configuration file's name should be 
 *default_repack.toml* 
 
-If the table settings file is not present then the default values.
+If the table settings file is not present then the default values are used.
 
 Inside the directory *~/.repcloud/config/table_conf* there is an example file to help the configuration.
 
@@ -98,6 +104,22 @@ The example configuration file sets the fillfactor:
     [storage.foo.bar]
     fillfactor = 30 
 
+Cleanup json/jsonb
+++++++++++++++++++++++++++++++++
+
+In the table's configuration file it's possible to specify whether to cleanup json/jsonb keys with null keys.
+It's possible to remove jsonb keys entirely but this applies only to the data type jsonb.
+The table's configuration file provides both examples.
+
+::
+
+	[public.foobar]
+	#cleanup_nulls and remove_keys for the same field are  currently mutually exclusive with cleanup_nulls taking the precedence
+	#strip nulls from a json/jsonb field
+	foo.cleanup_nulls = true
+
+	#filtering data, based on the key currently only jsonb is supported
+	bar.remove_keys = [ "key1" ]
 
 
 Limitations
@@ -110,8 +132,6 @@ The swap requires an exclusive lock on the old relation for the time necessary t
 If an error occurs during this phase, everything is rolled back. The procedure resumes the replay and will attempt again the swap after a sufficient amount of data has been replayed.
 
 Currently there is no support for single index repack or tablespace change.
-
-Currently there is no stop method for the background repack process.
 
 A connection must have the header in the form of [connections.<connection_name>]
 
@@ -126,6 +146,19 @@ until a sufficient amount of rows are replayed again.
 check_time specifies the time between two checks for changed data on the repacked table. The value will be matched against the replay speed in order to determine
 if the replay can reach the consistent status with the original table.
 If it's not possible the swap attempt aborts.
+
+In case of deadlock, it's possible to specify the resolution strategy. with connection's parameter **deadlock_resolution**.
+The possible values are *nothing, cancel_query, kill_query*.
+
+With **nothing ** the deadlock resolution will be managed by the database. With **cancel_query** the blocking queries will be cancelled with **pg_cancel_backend**. 
+With kill_query the blocking queries will be terminated with **pg_terminate_backend**.
+
+The configuration's example file have the parameter set to nothing.
+
+::
+
+	deadlock_resolution = "nothing"
+
 
 License
 ------------------------------
