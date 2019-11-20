@@ -150,7 +150,7 @@ If it's not possible the swap attempt aborts.
 In case of deadlock, it's possible to specify the resolution strategy. with connection's parameter **deadlock_resolution**.
 The possible values are *nothing, cancel_query, kill_query*.
 
-With **nothing ** the deadlock resolution will be managed by the database. With **cancel_query** the blocking queries will be cancelled with **pg_cancel_backend**. 
+With **nothing** the deadlock resolution will be managed by the database. With **cancel_query** the blocking queries will be cancelled with **pg_cancel_backend**. 
 With kill_query the blocking queries will be terminated with **pg_terminate_backend**.
 
 The configuration's example file have the parameter set to nothing.
