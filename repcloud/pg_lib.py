@@ -189,7 +189,7 @@ class pg_engine(object):
 			rep_status = (rep_step[0], rep_step[2],self.__repack_list.index(rep_step[0]), rep_step[3])
 			self.__id_table = rep_step[1] 
 		else:
-			rep_status = ('complete', 'complete', self.__repack_list.index('complete'), rep_step[3] )
+			rep_status = ('complete', 'complete', self.__repack_list.index('complete'), False )
 		return rep_status
 		
 	
