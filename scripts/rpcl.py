@@ -9,8 +9,12 @@ commands = [
 	'drop_schema',
 	'show_connections', 
 	'repack_tables', 
-	'prepare_repack'
-	'abort_repack'
+	'prepare_repack',
+	'abort_repack',
+	'replay_data',
+	'stop_prepare',
+	'stop_repack',
+	'stop_replay',
 	]
 
 if __name__ == "__main__":
