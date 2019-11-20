@@ -279,7 +279,7 @@ class repack_engine():
 
 	def __repack_tables(self):
 		"""
-		The method performs the repack 
+		The method performs the real repack 
 		"""
 		self.__check_connections()
 		self.pg_engine.connections = self.config["connections"]
@@ -401,6 +401,9 @@ class repack_engine():
 	
 		
 	def repack_tables(self):
+		"""
+		The method starts the repack process
+		"""
 		self.stop_replay()
 		signal.signal(signal.SIGINT, self.__terminate_repack)
 		if self.args.debug:
@@ -416,7 +419,20 @@ class repack_engine():
 			self.logger.log_message('Starting the repack process for configurantion %s.' % (self.args.config, ), 'info')
 			repack_daemon = Daemonize(app="repack_tables", pid=self.repack_pid, action=self.__repack_tables, foreground=foreground , keep_fds=keep_fds)
 			repack_daemon.start()
-
+	
+	def abort_repack(self):
+		"""
+		The method drops the prepared repack removing the log tables, the triggers and the copies.
+		"""
+		self.__check_connections()
+		self.pg_engine.connections = self.config["connections"]
+		self.pg_engine.tables_config=self.__tables_config
+		self.pg_engine.abort_repack(self.connection, self.args.connection )
+		self.logger.log_message('The repack process for configuration %s is complete.' % (self.args.config, ), 'info')
+		
+	
+		
+	
 	def prepare_repack(self):
 		self.stop_replay()
 		signal.signal(signal.SIGINT, self.__terminate_prepare)

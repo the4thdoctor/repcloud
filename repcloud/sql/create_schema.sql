@@ -32,6 +32,7 @@ CREATE TABLE t_table_repack
 	t_tab_pk text[],
 	en_repack_step ty_repack_step,
 	v_status  character varying(100) ,
+	b_ready_for_swap boolean NOT NULL DEFAULT FALSE,
 	i_size_start bigint,
 	i_size_end bigint,
 	xid_copy_start bigint,

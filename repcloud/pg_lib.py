@@ -174,7 +174,8 @@ class pg_engine(object):
 			SELECT 
 				coalesce(en_repack_step,'complete'),
 				i_id_table,
-				coalesce(v_status,'complete')
+				coalesce(v_status,'complete'),
+				b_ready_for_swap
 			FROM
 				sch_repcloud.t_table_repack
 			WHERE
@@ -185,10 +186,10 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_get_status,  (table[1], table[2], ))
 		rep_step = db_handler["cursor"].fetchone()
 		if rep_step:
-			rep_status = (rep_step[0], rep_step[2],self.__repack_list.index(rep_step[0]) )
+			rep_status = (rep_step[0], rep_step[2],self.__repack_list.index(rep_step[0]), rep_step[3])
 			self.__id_table = rep_step[1] 
 		else:
-			rep_status = ('complete', 'complete', self.__repack_list.index('complete') )
+			rep_status = ('complete', 'complete', self.__repack_list.index('complete'), rep_step[3] )
 		return rep_status
 		
 	
@@ -390,8 +391,12 @@ class pg_engine(object):
 				db_handler["cursor"].execute(sql_disable_trg)
 				try_disable = False
 			except psycopg2.Error as e:
-					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s for disabling the triggers' % (table[1], table[2] ), 'info')
-					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+					if e.pgcode == '40P01':
+						self.logger.log_message('Deadlock detected. I could not disable the triggers on the table %s.%s' % (table[1], table[2] ), 'info')
+						self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
+					elif e.pgcode=='42704': 
+						self.logger.log_message('Logging triggers on the table %s.%s already dropped' % (table[1], table[2] ), 'warning')
+						break
 			except:
 				raise
 		db_handler["cursor"].execute(sql_reset_lock_timeout,  )
@@ -406,7 +411,7 @@ class pg_engine(object):
 				db_handler["cursor"].execute(drop_stat[1])
 				try_drop = False
 			except psycopg2.Error as e:
-					self.logger.log_message('Could not acquire an exclusive lock on the table %s.%s for dropping the triggers' % (table[1], table[2] ), 'info')
+					self.logger.log_message('An error occurred during the drop of the table %s.%s' % (table[1], table[2] ), 'info')
 					self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
 			except:
 				raise
@@ -847,6 +852,19 @@ class pg_engine(object):
 		self.__update_repack_status(db_handler, 5, "complete")
 				
 		
+	def __set_ready_for_swap(self, db_handler, ready_for_swap):
+		"""
+		The method set the flag b_ready_for_swap to true at the end of prepare or to false at the end of repack.
+		"""
+		sql_set_flag = """
+		UPDATE sch_repcloud.t_table_repack
+			SET 
+				b_ready_for_swap=%s
+		WHERE 
+			i_id_table=%s
+		"""
+		db_handler["cursor"].execute(sql_set_flag, (ready_for_swap, self.__id_table, ))
+		
 	def __create_indices(self, db_handler, table):
 		"""
 		The method builds the new indices on the new table
@@ -869,9 +887,10 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_get_idx,  (table[1], table[2], ))
 		idx_list = db_handler["cursor"].fetchall()
 		for index in idx_list:
-			self.logger.log_message('Creating index %s on table %s. ' % (index[1],index[2],  ), 'info')
+			self.logger.log_message('Creating index %s on table %s. ' % (index[2],index[1],  ), 'info')
 			db_handler["cursor"].execute(index[0])
 		self.__update_repack_status(db_handler, 3, "complete")
+		self.__set_ready_for_swap(db_handler, True)
 		
 	def __build_select_list(self, db_handler, table):
 		"""
@@ -1148,7 +1167,7 @@ class pg_engine(object):
 			rep_status = self.__check_repack_step(db_handler, table)
 			if rep_status[1] == "complete":
 				if rep_status[2] == 8:
-					self.logger.log_message('Running repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
+					self.logger.log_message('Running prepare repack on  %s. Expected space gain: %s' % (table[0], table[5] ), 'info')
 					self.__create_new_table(db_handler, table)
 					rep_status = self.__check_repack_step(db_handler, table)
 				if rep_status[2] == 0:
@@ -1184,6 +1203,25 @@ class pg_engine(object):
 				
 			self.__disconnect_db(db_handler)
 			
+	def __abort_repack(self, con):
+		"""
+		The method removes the log table, the triggers and the copy of the tables prepared  for repack with prepare_repack.
+		"""
+		db_handler = self.__connect_db(self.connections[con])
+		for table in self.__tab_list:
+			rep_status = self.__check_repack_step(db_handler, table)
+			if rep_status[3] == True:
+				self.logger.log_message('Aborting the repack for the table %s.' % (table[0], ), 'info')
+				try:
+					self.__remove_table_repack(db_handler, table, con)
+				except:
+					self.logger.log_message('The repack for the table %s is already aborted.' % (table[0], ), 'info')
+				self.__set_ready_for_swap(db_handler, False)
+				self.__update_repack_status(db_handler, 8, "complete")
+			else:
+				self.logger.log_message('The table %s is not prepared for repack. Abort not required.' % (table[0], ), 'info')
+			
+		
 	
 	def __repack_tables(self, con):
 		"""
@@ -1211,19 +1249,18 @@ class pg_engine(object):
 				if  rep_status[2] < 3:
 					self.__create_indices(db_handler, table)
 					rep_status = self.__check_repack_step(db_handler, table)
-				if rep_status[2] < 5:
+				if rep_status[2] < 5 and rep_status[3] == True:
 					consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
 					if consistent_reachable:
 						self.__swap_tables(db_handler, table, con)
 						rep_status = self.__check_repack_step(db_handler, table)
-						
-						#self.__swap_tables_mp(db_handler, table, con)
 					else:
 						self.__remove_table_repack(db_handler, table, con)
 						self.__update_repack_status(db_handler, 6, "failed")
 				self.__validate_fkeys(db_handler)
 				self.__refresh_matviews(db_handler, table)
 				self.__update_repack_status(db_handler, 8, "complete")
+				self.__set_ready_for_swap(db_handler, False)
 			else: 
 				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
 			tab_status = self.__check_repack_step(db_handler, table)
@@ -1250,8 +1287,10 @@ class pg_engine(object):
 		if action == 'repack':
 			self.__repack_tables(con)
 			self.__analyze_tables(con)
-		if action == 'prepare':
+		elif action == 'prepare':
 			self.__prepare_repack(con)
+		elif action == 'abort':
+			self.__abort_repack(con)
 		
 	def __replay_loop(self, con):
 		"""
@@ -1259,7 +1298,6 @@ class pg_engine(object):
 		"""
 		self.__get_repack_tables(con)
 		db_handler = self.__connect_db(self.connections[con])
-		
 		for table in self.__tab_list:
 			rep_status = self.__check_repack_step(db_handler, table)
 			if rep_status[1] == "complete" and rep_status[2] < 5:
@@ -1329,3 +1367,12 @@ class pg_engine(object):
 				self.__replay_loop(coname)
 			time.sleep(1)
 		
+	def abort_repack(self, connection, coname):
+		if coname == 'all':
+			self.logger.log_message('Aborting repack for all the tables prepared for repack defined in the available connections'  'info')
+			for con in connection:
+				self.logger.log_message('Aborting repack for all the tables prepared for repack defined in the connection %s' % con, 'info')
+				self.__repack_loop(con, 'abort')
+		else:
+			self.logger.log_message('Aborting repack for all the tables prepared for repack defined in connection %s' % coname, 'info')
+			self.__repack_loop(coname, 'abort')

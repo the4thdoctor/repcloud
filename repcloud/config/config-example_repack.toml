@@ -20,5 +20,5 @@ fillfactor = 30
 foo.cleanup_nulls = true
 
 #filtering data, based on the key currently only jsonb is supported
-bar.remove_keys = [ "'key1" ]
+bar.remove_keys = [ "key1" ]
 
