@@ -592,9 +592,9 @@ class pg_engine(object):
 			FROM
 			(
 				SELECT
-					secatt,
-					refname,
-					nspname,
+					ser.secatt,
+					ser.refname,
+					ser.nspname,
 					ser.refobjid::regclass::TEXT AS seqtab,
 					seq.increment_by,
 					seq.cache_size,

@@ -1368,12 +1368,7 @@ SELECT
 FROM
 (
 	SELECT DISTINCT
-	 	dep.deptype,
-		dep.classid,
-		dep.objid,
-		dep.refclassid,
-		dep.refobjid,
-		ad.adsrc,
+	 	dep.refobjid,
 		cl.relkind,
 		(SELECT attname FROM pg_catalog.pg_attribute WHERE (attrelid,attnum)=(SELECT adrelid,adnum FROM pg_attrdef WHERE oid=depref.objid)) AS secatt,
 		COALESCE(coc.relname, clrw.relname) AS ownertable,
