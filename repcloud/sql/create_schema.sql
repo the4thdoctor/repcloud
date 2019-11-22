@@ -125,6 +125,7 @@ DECLARE
 	v_i_action_replay	bigint[];
 	v_i_actions 		bigint;
 	v_t_tab_data		text[];
+	v_i_xid_copy_start	bigint;
 	v_t_sql_replay		text;
 	v_t_sql_act_rep		text;
 	v_t_sql_act 		text;
@@ -134,6 +135,17 @@ BEGIN
 
 
 
+	RAISE DEBUG 'BEGIN PROCEDURE';
+
+	v_i_xid_copy_start:=(
+		SELECT
+			xid_copy_start
+		FROM
+			sch_repcloud.t_table_repack
+		WHERE
+				v_schema_name=p_t_schema
+			AND v_old_table_name=p_t_table
+	);
 
 	v_t_tab_data:=(
 		SELECT
@@ -187,47 +199,22 @@ BEGIN
 				i_action_id
 			FROM
 				sch_repnew.%I tlog
-			INNER JOIN sch_repcloud.t_table_repack trep
-				ON trep.oid_old_table=tlog.oid_old_tab_oid
 			WHERE
-					trep.v_schema_name=%L
-				AND trep.v_old_table_name=%L
-				AND tlog.i_xid_action>=trep.xid_copy_start
+				tlog.i_xid_action>%L
+			ORDER BY
+				i_xid_action
 			LIMIT %L
+
 		) aid
 	;
 	',
 	v_t_tab_data[10],
-	p_t_schema,
-	p_t_table,
+	v_i_xid_copy_start,
 	p_i_max_replay
 	);
 	EXECUTE v_t_sql_act_rep INTO v_i_action_replay;
-
-	v_t_sql_act:=format('
-		SELECT
-			count(i_action_id)
-		FROM
-			sch_repnew.%I tlog
-			INNER JOIN sch_repcloud.t_table_repack trep
-				ON trep.oid_old_table=tlog.oid_old_tab_oid
-			WHERE
-					trep.v_schema_name=%L
-				AND trep.v_old_table_name=%L
-				AND tlog.i_xid_action>trep.xid_copy_start
-				AND tlog.i_action_id NOT IN (SELECT unnest(%L::bigint[]))
-	;
-	',
-	v_t_tab_data[10],
-	p_t_schema,
-	p_t_table,
-	v_i_action_replay
-	);
-
-	EXECUTE v_t_sql_act INTO v_i_actions;
-
-
-
+	RAISE DEBUG 'GOT % ROWS FOR REPLAY',COALESCE(array_length(v_i_action_replay,1),0);
+	
 	v_t_sql_replay:=format(
 		'
 			SELECT
@@ -267,8 +254,8 @@ BEGIN
 				sch_repnew.%I
 			WHERE i_action_id = ANY(%L)
 			ORDER BY
-				i_action_id,
 				i_xid_action
+				
 
 		',
 		v_t_tab_data[1],
@@ -289,20 +276,42 @@ BEGIN
 
 	);
 	RAISE DEBUG '%',v_t_sql_replay;
+	RAISE DEBUG 'STARTING THE REPLAY';
 	FOR v_r_replay IN EXECUTE v_t_sql_replay
 	LOOP
 		EXECUTE v_r_replay.rec_act;
 	END LOOP;
+	RAISE DEBUG 'REPLAY COMPLETE';
 	v_t_sql_delete:=format(
 		'DELETE FROM sch_repnew.%I WHERE i_action_id=ANY(%L::bigint[]);',
 		v_t_tab_data[10],
 		v_i_action_replay
 
 	);
+	RAISE DEBUG 'REMOVING THE REPLAYED ROWS';
 	EXECUTE v_t_sql_delete;
+	
+	RAISE DEBUG 'CHECKING IF WE STILL HAVE ROWS TO REPLAY';
+	v_t_sql_act:=format('
+		SELECT
+			i_action_id
+		FROM
+			sch_repnew.%I tlog
+			WHERE
+				tlog.i_xid_action>%L
+		LIMIT 1
+	;
+	',
+	v_t_tab_data[10],
+	v_i_xid_copy_start
+	);
+	EXECUTE v_t_sql_act INTO v_i_actions;
+	RAISE DEBUG 'ROWS TO REPLAY AT LEAST %',coalesce(count(v_i_actions),0);
 
+
+	RAISE DEBUG 'ALL DONE';
 	RAISE DEBUG '%',v_t_sql_act;
-	RETURN v_i_actions;
+	RETURN coalesce(count(v_i_actions),0);
 END;
 $BODY$
 LANGUAGE plpgsql
