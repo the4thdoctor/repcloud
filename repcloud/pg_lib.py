@@ -491,8 +491,8 @@ class pg_engine(object):
 				self.logger.log_message('All rows replayed. Signalling the caller.', 'debug')
 				queue.put(True)
 				break
-			elif remaining_rows[0]<int(max_replay_rows):
-				self.logger.log_message('%s rows left for replay, signalling the caller.' % (remaining_rows[0], ) , 'debug')
+			elif remaining_rows[0]==0:
+				self.logger.log_message('All queued rows replayed, signalling the caller.', 'debug')
 				queue.put(True)
 				self.logger.log_message('Waiting for the final replay signal.' , 'debug')
 				final_replay = queue.get()
