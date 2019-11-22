@@ -498,7 +498,7 @@ class pg_engine(object):
 				final_replay = queue.get()
 				self.logger.log_message('Starting the final replay.' , 'debug')
 			else:
-				self.logger.log_message('%s row left for replay.' % (remaining_rows[0], ) , 'debug')
+				self.logger.log_message('There are still rows to replay.' , 'debug')
 
 
 		self.logger.log_message('End of the replay loop for table %s' %(table[0], ) , 'info')
@@ -1240,13 +1240,9 @@ class pg_engine(object):
 					self.__create_indices(db_handler, table)
 					rep_status = self.__check_repack_step(db_handler, table)
 				if rep_status[2] < 5 and rep_status[3] == True:
-					consistent_reachable = self.__check_consistent_reachable(db_handler, table, con)
-					if consistent_reachable:
-						self.__swap_tables(db_handler, table, con)
-						rep_status = self.__check_repack_step(db_handler, table)
-					else:
-						self.__remove_table_repack(db_handler, table, con)
-						self.__update_repack_status(db_handler, 6, "failed")
+					self.__swap_tables(db_handler, table, con)
+					rep_status = self.__check_repack_step(db_handler, table)
+					
 				self.__validate_fkeys(db_handler)
 				self.__refresh_matviews(db_handler, table)
 				self.__update_repack_status(db_handler, 8, "complete")
