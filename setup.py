@@ -67,7 +67,7 @@ setup(
 	package_data=package_data,
 	packages=setuptools.find_packages(),
 	include_package_data = True,
-	python_requires='>=3.3',
+	python_requires='>=3.5',
 	keywords='postgresql database cloud repack transform',
 
 )
