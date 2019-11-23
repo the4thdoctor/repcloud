@@ -113,7 +113,6 @@ CREATE TABLE sch_repcloud.t_view_def (
 
 
 -- functions
-
 CREATE OR REPLACE FUNCTION sch_repcloud.fn_replay_change(text,text,integer)
 RETURNS bigint as
 $BODY$
@@ -214,9 +213,27 @@ BEGIN
 	);
 	EXECUTE v_t_sql_act_rep INTO v_i_action_replay;
 	RAISE DEBUG 'GOT % ROWS FOR REPLAY',COALESCE(array_length(v_i_action_replay,1),0);
-	
+	RAISE DEBUG 'DROPPING THE TEMPORARY TABLE FOR THE REPLAY IF EXISTS';
+	DROP TABLE IF EXISTS pg_temp.t_replay;
+	RAISE DEBUG 'CREATING THE TEMPORARY TABLE FOR THE REPLAY';
+	CREATE TEMPORARY TABLE IF NOT EXISTS t_replay
+		(
+			i_action_id bigint,
+			i_xid_action bigint,
+			v_action CHARACTER VARYING(20),
+			rec_act text
+		)
+	;
+	RAISE DEBUG 'BUILDING THE SQL REPLAY CONSTRUCTOR';
 	v_t_sql_replay:=format(
 		'
+			INSERT INTO pg_temp.t_replay
+			(
+				i_action_id,
+				i_xid_action,
+				v_action,
+				rec_act
+			)
 			SELECT
 				i_action_id,
 				i_xid_action,
@@ -253,8 +270,7 @@ BEGIN
 			FROM
 				sch_repnew.%I
 			WHERE i_action_id = ANY(%L)
-			ORDER BY
-				i_xid_action
+			;
 				
 
 		',
@@ -275,9 +291,17 @@ BEGIN
 		v_i_action_replay
 
 	);
-	RAISE DEBUG '%',v_t_sql_replay;
+
+	EXECUTE v_t_sql_replay;
 	RAISE DEBUG 'STARTING THE REPLAY';
-	FOR v_r_replay IN EXECUTE v_t_sql_replay
+	FOR v_r_replay IN
+		SELECT
+			rec_act
+		FROM
+			pg_temp.t_replay
+		ORDER BY
+			i_xid_action,
+			i_action_id
 	LOOP
 		EXECUTE v_r_replay.rec_act;
 	END LOOP;
@@ -308,6 +332,8 @@ BEGIN
 	EXECUTE v_t_sql_act INTO v_i_actions;
 	RAISE DEBUG 'ROWS TO REPLAY AT LEAST %',coalesce(count(v_i_actions),0);
 
+	RAISE DEBUG 'ENSURING THE TEMPORARY TABLE IS DROPPED';
+	DROP TABLE IF EXISTS pg_temp.t_replay;
 
 	RAISE DEBUG 'ALL DONE';
 	RAISE DEBUG '%',v_t_sql_act;
@@ -316,6 +342,7 @@ END;
 $BODY$
 LANGUAGE plpgsql
 ;
+
 
 
 
