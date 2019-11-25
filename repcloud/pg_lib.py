@@ -768,9 +768,9 @@ class pg_engine(object):
 						db_handler["cursor"].execute(sql_drop_trg)
 
 						#remove the log table
-						sql_drop_log_table = sql_drop_log_table % tswap[11]
+						replaced_sql_drop_log_table = sql_drop_log_table % tswap[11]
 						self.logger.log_message("Dropping the log table ", 'info')
-						db_handler["cursor"].execute(sql_drop_log_table)
+						db_handler["cursor"].execute(replaced_sql_drop_log_table)
 
 						#remove the old table
 						self.logger.log_message("Dropping the old table", 'info')
