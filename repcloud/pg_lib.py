@@ -472,7 +472,7 @@ class pg_engine(object):
 			self.logger.log_message('The replay rate on %s.%s is not sufficient to reach the consistent status. Aborting the repack.' % (table[1], table[2],  ), 'info')
 			return False
 
-	def __replay_data(self, table, con, queue):
+	def __replay_data(self, table, con, queue_swap,queue_replay):
 		"""
 		The method performs a replay on the specified table using the connection parameters.
 		The method creates a new database connection for performing its task.
@@ -489,13 +489,13 @@ class pg_engine(object):
 			remaining_rows = db_handler["cursor"].fetchone()
 			if final_replay and remaining_rows[0]==0:
 				self.logger.log_message('All rows replayed. Signalling the caller.', 'debug')
-				queue.put(True)
+				queue_replay.put(True)
 				break
 			elif remaining_rows[0]==0:
 				self.logger.log_message('All queued rows replayed, signalling the caller.', 'debug')
-				queue.put(True)
+				queue_replay.put(True)
 				self.logger.log_message('Waiting for the final replay signal.' , 'debug')
-				final_replay = queue.get()
+				final_replay = queue_swap.get()
 				self.logger.log_message('Starting the final replay.' , 'debug')
 			else:
 				self.logger.log_message('There are still rows to replay.' , 'debug')
@@ -696,27 +696,29 @@ class pg_engine(object):
 		table_swap = db_handler["cursor"].fetchall()
 
 		self.__update_repack_status(db_handler, 4, "in progress")
-		queue = mp.Queue()
-		replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
+		queue_swap = mp.Queue()
+		queue_replay = mp.Queue()
+		replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue_swap,queue_replay))
 		replay_daemon.start()
 		while True:
-			if not replay_daemon.is_alive():
-				queue = None
-				queue = mp.Queue()
-				replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
-				replay_daemon.start()
-				time.sleep(1)
+			try:
+				replay_daemon.terminate()
+			except:
+				self.logger.log_message('The replay daemon is not running.' , 'warn')
+			queue_swap = None
+			queue_swap = mp.Queue()
+			queue_replay = None
+			queue_replay = mp.Queue()
+			replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue_swap,queue_replay))
+			replay_daemon.start()
 			self.logger.log_message('Waiting for the can swap signal.' , 'info')
-			try_swap = queue.get()
+			try_swap = queue_replay.get()
 			if try_swap:
 				self.__update_repack_status(db_handler, 5, "in progress")
 				# set the lock_timeout we don't want to keep the other sessions lock in wait more than necessary
 				db_handler["cursor"].execute(sql_set_lock_timeout,  (lock_timeout,))
 				#set the autocommit off as we want to rollback safely in case of failure
 				db_handler["connection"].set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE, autocommit=False)
-
-
-
 				try:
 					vxid = self.__get_vxid(db_handler)
 					self.__wait_for_vxid(db_handler, vxid)
@@ -724,15 +726,13 @@ class pg_engine(object):
 					self.logger.log_message('Trying to acquire an exclusive lock on the table %s.%s' % (table[1], table[2] ), 'info')
 					db_handler["cursor"].execute(sql_lock_table)
 					self.logger.log_message('Starting the watchdog process', 'info')
-					watchdog_daemon = mp.Process(target=self.__watchdog, name='watchdog_process', daemon=True, args=(table, con, db_handler["pid"] ,))
-					watchdog_daemon.start()
-
-					queue.put(True)
-					time.sleep(1)
+					self.logger.log_message('Signalling the replay daemon for the final replay.', 'info')
+					queue_swap.put(True)
 					self.logger.log_message('Waiting for the final replay to complete.', 'info')
-					can_swap = queue.get()
-
+					can_swap = queue_replay.get()
 					if can_swap:
+						watchdog_daemon = mp.Process(target=self.__watchdog, name='watchdog_process', daemon=True, args=(table, con, db_handler["pid"] ,))
+						watchdog_daemon.start()
 
 						#determine which sequences are attached to the original table and reset the same on the new table in order to make them work properly after the swap
 						db_handler["cursor"].execute(sql_seq,  (self.__id_table, ))
@@ -804,7 +804,7 @@ class pg_engine(object):
 						self.logger.log_message('An error occurred during the swap attempt on the table %s.%s, resuming the replay' % (table[1], table[2] ), 'info')
 						self.logger.log_message("SQLCODE: %s SQLERROR: %s" % (e.pgcode, e.pgerror), 'error')
 
-					#this section is to manage the risk of having the session killed by the deadlock esolution
+					#this section is to manage the risk of having the session killed by the deadlock resolution
 					if  db_handler["connection"].closed:
 						#we mark the repack as failed and then we remove the table's copy and the logging triggers
 						self.logger.log_message('The connection is no longer active, trying to reconnect.' , 'info')
@@ -1288,17 +1288,17 @@ class pg_engine(object):
 			rep_status = self.__check_repack_step(db_handler, table)
 			if rep_status[1] == "complete" and rep_status[2] < 5:
 				self.logger.log_message("Replaying data for table %s." % (table[0], ), 'info')
-				queue = mp.Queue()
-				replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue,))
+				queue_swap = mp.Queue()
+				queue_replay = mp.Queue()
+				replay_daemon = mp.Process(target=self.__replay_data, name='replay_process', daemon=True, args=(table, con, queue_swap,queue_replay))
 				replay_daemon.start()
-				replay_done = queue.get()
+				self.logger.log_message('Waiting for the can swap signal.' , 'info')
+				replay_done = queue_replay.get()
 				if replay_done :
-					queue.put(True)
+					queue_swap.put(True)
 					while  replay_daemon.is_alive():
 						self.logger.log_message("Waiting for the replay daemon to finish." , 'info')
 						time.sleep(1)
-
-
 		self.__disconnect_db(db_handler)
 
 
