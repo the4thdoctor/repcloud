@@ -199,7 +199,7 @@ BEGIN
 			FROM
 				sch_repnew.%I tlog
 			WHERE
-				tlog.i_xid_action>%L
+				tlog.i_xid_action>=%L
 			ORDER BY
 				i_xid_action
 			LIMIT %L
