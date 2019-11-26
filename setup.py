@@ -17,7 +17,7 @@ package_data = {'repcloud': ['config/*.toml', 'sql/*.sql', 'LICENSE.txt']}
 
 setup(
 	name="repcloud",
-	version="0.0.1dev",
+	version="0.1.a1",
 	description="PostgreSQL repacker without need",
 	long_description=readme(),
 	author = "Federico Campoli",

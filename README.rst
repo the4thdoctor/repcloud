@@ -11,6 +11,9 @@ repcloud
 .. image:: https://img.shields.io/badge/License-PostgreSQL-blue
 		:target: https://github.com/the4thdoctor/repcloud/issues
 
+.. image:: https://img.shields.io/github/release/the4thdoctor/repcloud
+		:target: https://github.com/the4thdoctor/repcloud/release
+
 .. image:: https://img.shields.io/pypi/dm/repcloud
     :target: https://pypi.org/project/repcloud
 
