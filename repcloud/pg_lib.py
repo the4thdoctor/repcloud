@@ -983,7 +983,7 @@ class pg_engine(object):
 		db_handler["cursor"].execute(sql_analyze)
 		self.__update_repack_status(db_handler, 1, "complete")
 
-	def __refresh_matviews(self, db_handler, table):
+	def __refresh_matviews(self, db_handler, id_tables):
 		"""
 			The method refreshes all the materialised views attached to the main table and
 			creates on them the required indices.
@@ -999,12 +999,12 @@ class pg_engine(object):
 				ON tab.i_id_table=vie.i_id_table
 			WHERE
 						vie.t_refresh_matview IS NOT NULL
-					AND tab.i_id_table=%s
+					AND tab.i_id_table=ANY(%s)
 			ORDER BY
 				i_create_order;
 		"""
 
-		db_handler["cursor"].execute(sql_get_refresh,  (self.__id_table, ))
+		db_handler["cursor"].execute(sql_get_refresh,  (id_tables, ))
 		refresh_view = db_handler["cursor"].fetchall()
 
 		sql_get_idx = """
@@ -1218,8 +1218,8 @@ class pg_engine(object):
 			The method executes the repack operation for each table in self.tab_list
 			self.__repack_list = [ 'create table','copy', 'create pkey','create indices', 'replay','swap tables','swap aborted','validate','complete' ]
 		"""
-		tables_repacked=[]
-
+		tables_repacked = []
+		id_tables = []
 
 		db_handler = self.__connect_db(self.connections[con])
 
@@ -1242,15 +1242,15 @@ class pg_engine(object):
 				if rep_status[2] < 5 and rep_status[3] == True:
 					self.__swap_tables(db_handler, table, con)
 					rep_status = self.__check_repack_step(db_handler, table)
-					
-				self.__validate_fkeys(db_handler)
-				self.__refresh_matviews(db_handler, table)
 				self.__update_repack_status(db_handler, 8, "complete")
 				self.__set_ready_for_swap(db_handler, False)
+				id_tables.append(self.__id_table)
 			else:
 				self.logger.log_message("The repack step for the table %s is %s and the status is %s. Skipping the repack." % (table[0], rep_status[0], rep_status[1],  ), 'info')
 			tab_status = self.__check_repack_step(db_handler, table)
 			tables_repacked.append("Table: %s - Step: %s - Status: %s" %(table[0], tab_status[0], tab_status[1]))
+		self.__refresh_matviews(db_handler, id_tables)
+		self.__validate_fkeys(db_handler)
 		self.__disconnect_db(db_handler)
 		self.tables_repacked = tables_repacked
 
