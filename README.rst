@@ -33,10 +33,12 @@ Views and materialised views referencing the repacked table are dropped and crea
 
 Acknowledgement
 ...................................
-Coding repcloud has been possible thanks to the sponsorhip of `Cleo AI. https://www.meetcleo.com/ <https://www.meetcleo.com/>`_
+Coding repcloud has been possible thanks to the sponsorhip of `Cleo AI. https://www.meetcleo.com/ <https://www.meetcleo.com/>`_ 
 
-.. image:: https://github.com/the4thdoctor/repcloud/blob/master/images/cleo_logo.png
+.. image:: https://raw.githubusercontent.com/the4thdoctor/repcloud/master/images/cleo_logo.png
         :target: https://www.meetcleo.com/
+        :scale: 30 %
+
 
 Configuration
 ...................................
