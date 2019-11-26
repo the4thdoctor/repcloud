@@ -1,5 +1,20 @@
 repcloud
 ------------------------------
+.. image:: https://img.shields.io/github/issues/the4thdoctor/repcloud
+		:alt: GitHub issues
+		:target: https://github.com/the4thdoctor/repcloud/issues
+
+.. image:: https://img.shields.io/github/forks/the4thdoctor/repcloud
+		:alt: GitHub forks
+		:target: https://github.com/the4thdoctor/repcloud/network
+
+.. image:: https://img.shields.io/badge/License-PostgreSQL-blue
+		:target: https://github.com/the4thdoctor/repcloud/issues
+
+.. image:: https://img.shields.io/pypi/dm/repcloud
+    :target: https://pypi.org/project/repcloud
+
+
 repcloud is a repacker for PostgreSQL tables. Unlikely pgrepack there's no need for extension or external libraries.
 
 The procedure can repack the tables using a similar strategy like pgrepack, but without the physical file swap.
