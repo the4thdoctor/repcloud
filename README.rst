@@ -125,12 +125,12 @@ Example files
 ++++++++++++++++++++++++++++++++
 
 
-config-example.toml_.
+Example configuration file: config-example.toml_.
 
 .. _config-example.toml: https://github.com/the4thdoctor/repcloud/blob/master/repcloud/config/config-example.toml
 
 
-config-example_repack.toml_.
+Example table setup for configuration **config-example** and connection **repack**: config-example_repack.toml_.
 
 .. _config-example_repack.toml: https://github.com/the4thdoctor/repcloud/blob/master/repcloud/config/config-example_repack.toml
 
