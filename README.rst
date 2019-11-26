@@ -121,6 +121,19 @@ The table's configuration file provides both examples.
 	#filtering data, based on the key currently only jsonb is supported
 	bar.remove_keys = [ "key1" ]
 
+Example files
+++++++++++++++++++++++++++++++++
+
+
+config-example.toml_.
+
+.. _config-example.toml: https://github.com/the4thdoctor/repcloud/blob/master/repcloud/config/config-example.toml
+
+
+config-example_repack.toml_.
+
+.. _config-example_repack.toml: https://github.com/the4thdoctor/repcloud/blob/master/repcloud/config/config-example_repack.toml
+
 
 Limitations
 ............................
